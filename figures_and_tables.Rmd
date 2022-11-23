@@ -1,0 +1,3132 @@
+---
+title: "figures_and_tables"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r install and load packages}
+
+  if(!require(BiocManager)){install.packages("BiocManager")}
+  if(!require(ggtree)){BiocManager::install("ggtree")}
+  if(!require(DESeq2)){BiocManager::install("DESeq2")}
+  library(ggtree)
+  library(DESeq2)
+
+  devtools::install_github("wilkox/ggwrap")
+  library(ggwrap)
+
+  if (!require("pacman")){install.packages("pacman")}
+  pacman::p_load(BiocGenerics, ComplexUpset, dendextend, devtools, flextable, furrr, GGally, ggdendro, ggplotify, ggpubr, grid, gggenes, here, lemon, lme4, lmerTest, magrittr, MuMIn, pals, phangorn, phyloseq, RColorBrewer, readxl, rstatix, seqinr, sjPlot, spaa, cowplot, tidyverse, vegan, vroom, xlsx)
+
+```
+
+```{r Options}
+
+  # i_am("figures_and_tables.Rmd") # set where here() starts as the directory which contains Scripts/figures_and_tables.Rmd
+
+  theme_set(theme_bw()) # set classic theme for ggplot
+  browns_palette <- c("#B5651D", "#974C00", "#7A3500", "#5D1E00", "#410600", "#2A0001")
+  set.seed(123)
+  # width of 85 mm for half page width figure
+  # width of 170 mm for full page width figure
+  # maximum height of 225 mm for figure and legend
+
+```
+
+## Methods
+
+# Supplementary Table S1 - DNA vOTU raw reads
+
+```{r Supplementary Table S1 - DNA vOTU raw reads}
+
+  DNA_vOTU_reads <- 
+    as_tibble(read.csv(here("Data/DNA_vOTU_reads.csv")))
+  # 10,196 DNA vOTUs
+    # 9,804 dsDNA phage vOTUs
+    # 532 ssDNA vOTUs
+  # raw genome read values (filtered for 1x coverage across 75% of genome sequence)
+
+  write.csv(DNA_vOTU_reads, file = here("Tables/Table S1.csv"), row.names = F)
+
+```
+
+# Supplementary Table S2 - Microbial OTU normalised coverage
+
+```{r Supplementary Table S2 - Microbial OTU normalised coverage}
+
+  OTU_coverage <- 
+    as_tibble(read.csv(here("Data/OTU_normalised_coverage.csv")))
+  # 1,447 OTUs
+  # normalised coverage values
+    # (raw coverage / sample read depth) * mean read depth across all samples
+
+  write.csv(OTU_coverage, file = here("Tables/Table S2.csv"), row.names = F)
+
+```
+
+# Supplementary Table S3 - Microbial MAG normalised coverage
+
+```{r Supplementary Table S3 - Microbial MAG normalised coverage}
+
+  MAG_coverage <- 
+    as_tibble(read.csv(here("Data/MAG_normalised_coverage.csv")))
+  # 285 MAGs
+  # normalised coverage values
+    # (raw coverage / sample read depth) * mean read depth across all samples
+
+  write.csv(MAG_coverage, file = here("Tables/Table S3.csv"), row.names = F)
+
+```
+
+## Soil viral communities were structured with soil depth at both the population-level and strain-level
+
+# Supplementary Figure S1 - Taxonomic novelty of recovered soil vOTUs
+
+```{r Import and parse vConTACT2 network files}
+
+# import nodes (17,917)
+  nodes <- 
+    as_tibble(read.delim(here("Data/nodes.csv"), sep = ",", header = T)) %>% 
+    select(GENOME, x, y)
+
+# import edges (1,721,928)
+  edges <- 
+    as_tibble(read.delim(here("Data/edges.csv"), sep = ",", header = T)) %>% 
+    inner_join(nodes, by = "GENOME")
+
+# record viral cluster statuses
+  genome_by_genome <- 
+    as_tibble(read.delim(here("Data/genome_by_genome_overview.csv"), sep = ",", header = T)) %>% 
+    select("NAME" = Genome,
+           "VC_STATUS" = VC.Status,
+           VC) %>% 
+    mutate(VC_STATUS = case_when(grepl("Overlap", VC_STATUS) ~ "Singleton",
+                                 VC_STATUS == "Clustered/Singleton" ~ "Clustered",
+                                 TRUE ~ VC_STATUS))
+  # Clustered = high-confidence clustering (roughly equivalent to an ICTV genus).
+  # Singleton = few or no gene similarities against other genomes (most singletons don’t make it into the network).
+  # Overlap = sharing overlap with other genome(s) from multiple VCs. Often, these viruses have shared core genes, or a large portion of their genome has a conserved region that is shared among many others.
+  # Outlier = some genes shared with other genomes, but ClusterONE wasn’t confident enough to place them within a particular VC (roughly related at the sub-family or family level).
+  # Clustered/Singleton = in a subcluster alone (the cluster got split).
+  
+# create data frame of node location for genomes in viral clusters
+  VC_nodes <-
+    nodes %>%
+    left_join(genome_by_genome, by = c("GENOME" = "NAME")) %>%
+    mutate(REF_PHAGE = case_when(grepl("DNA_vOTU", GENOME) ~ "NO",
+                                 TRUE ~ "YES")) %>% 
+    mutate(PHAGE = case_when(GENOME %in% filter(DNA_vOTU_reads, PHAGE == "dsDNAphage")$NAME ~ "dsDNA vOTU",
+                             GENOME %in% filter(DNA_vOTU_reads, PHAGE == "ssDNA")$NAME ~ "ssDNA vOTU",
+                             TRUE ~ "Reference genome")) %>% 
+    mutate(PHAGE = factor(PHAGE, levels = c("dsDNA vOTU", "ssDNA vOTU", "Reference genome")))
+  
+```
+
+```{r Supplementary Figure S1A - Viral cluster identity}
+
+# extract viral cluster identities for vOTUs
+  cluster_identities <- 
+    DNA_vOTU_reads %>% 
+    group_by(CLUSTER) %>% 
+    mutate(CLUSTER_STATUS = case_when(VC_STATUS == "Singleton" ~ "Singleton",
+                                      VC_STATUS == "Outlier" & REF_PHAGES_IN_VC == "YES" ~ "Outlier to cluster with reference phages",
+                                      VC_STATUS == "Outlier" & REF_PHAGES_IN_VC == "NO" ~ "Outlier to cluster without reference phages",
+                                      VC_STATUS == "Clustered" & REF_PHAGES_IN_VC == "YES" ~ "Clustered with reference phages",
+                                      VC_STATUS == "Clustered" & REF_PHAGES_IN_VC == "NO" ~ "Clustered without reference phages")) %>% 
+    ungroup() %>% 
+    select(NAME, CLUSTER_STATUS)
+
+# create data frame with cluster status for visualising shared protein network
+  df <- 
+    VC_nodes %>% 
+    left_join(cluster_identities, by = c("GENOME" = "NAME")) %>%
+    mutate(CLUSTER_STATUS = case_when(is.na(CLUSTER_STATUS) ~ "INPHARED phage genome",
+                                      CLUSTER_STATUS == "Clustered without reference phages" | CLUSTER_STATUS == "Outlier to cluster without reference phages" ~ "Without reference phages",
+                                      CLUSTER_STATUS == "Clustered with reference phages" | CLUSTER_STATUS == "Outlier to cluster with reference phages" ~ "With reference phages",
+                                      TRUE ~ CLUSTER_STATUS))
+
+# plot shared protein network
+  left <-
+    ggplot(df, aes(x = x, y = y)) + 
+      geom_line(data = edges, aes(group = PAIR),
+                color = "black", size = 0.5, alpha = 0.2) +
+      geom_point(data = filter(df, CLUSTER_STATUS == "INPHARED phage genome"), aes(fill = CLUSTER_STATUS),
+                 size = 2, shape = 21, stroke = 0.5, colour = "black", alpha = 0.8) +
+      geom_point(data = filter(df, CLUSTER_STATUS == "Singleton"), aes(fill = CLUSTER_STATUS),
+                 size = 2, shape = 21, stroke = 0.5, colour = "black", alpha = 0.8) +
+      geom_point(data = filter(df, CLUSTER_STATUS == "Without reference phages"), aes(fill = CLUSTER_STATUS),
+                 size = 2, shape = 21, stroke = 0.5, colour = "black", alpha = 0.8) +
+      geom_point(data = filter(df, CLUSTER_STATUS == "With reference phages"), aes(fill = CLUSTER_STATUS),
+                 size = 2, shape = 21, stroke = 0.5, colour = "black", alpha = 0.8) +
+      scale_fill_manual(values = c("#009E73", "#D55E00", "#CC79A7", "grey80"),
+                        limits = c("With reference phages", "Without reference phages", "Singleton", "INPHARED phage genome")) +
+      theme_minimal() + 
+      coord_fixed(xlim = c(0, 1),
+                  ylim = c(0, 1)) +
+      guides(fill = guide_legend(override.aes = list(size = c(4, 4, 4, 4)))) +
+      theme(axis.text = element_blank(),
+            axis.title = element_blank(),
+            text = element_text(size = 10),
+            panel.grid = element_blank(), 
+            legend.direction = "vertical",
+            legend.position = "right") +
+      labs(fill = "Viral cluster indentity:")
+  
+  legend <- get_legend(left)
+  left <- left + theme(legend.position = "none")
+  
+# plot bar chart of viral cluster identities for dsDNA and ssDNA vOTUs
+  plot <- 
+    DNA_vOTU_reads %>% 
+    group_by(CLUSTER) %>% 
+    mutate(CLUSTER_STATUS = case_when(VC_STATUS == "Singleton" ~ "Singleton",
+                                      VC_STATUS == "Outlier" & REF_PHAGES_IN_VC == "YES" ~ "Clustered/outlier to cluster with reference phages",
+                                      VC_STATUS == "Outlier" & REF_PHAGES_IN_VC == "NO" ~ "Clustered/outlier to cluster without reference phages",
+                                      VC_STATUS == "Clustered" & REF_PHAGES_IN_VC == "YES" ~ "Clustered/outlier to cluster with reference phages",
+                                      VC_STATUS == "Clustered" & REF_PHAGES_IN_VC == "NO" ~ "Clustered/outlier to cluster without reference phages")) %>% 
+    ungroup() %>% 
+    mutate(CLUSTER_STATUS = case_when(NAME %in% VC_nodes$GENOME ~ CLUSTER_STATUS,
+                                      TRUE ~ "NONE")) %>%
+    ggplot(aes(x = PHAGE, fill = factor(CLUSTER_STATUS, levels = c("NONE", "Clustered/outlier to cluster with reference phages", "Clustered/outlier to cluster without reference phages", "Singleton")))) +
+      geom_bar(stat = "count", position = "fill") +
+      scale_fill_manual(values = c(alpha("white", 0), "#009E73", "#D55E00", "#CC79A7"),
+                        limits = c("NONE", "Clustered/outlier to cluster with reference phages", "Clustered/outlier to cluster without reference phages", "Singleton"),
+                        labels = c("NONE", "With reference phages", "Without reference phages", "Singleton")) +
+      scale_x_discrete(breaks = c("dsDNAphage", "ssDNA"),
+                       labels = c("dsDNA", "ssDNA")) +
+      labs(x = "",
+           y = "Proportion\nof vOTUs",
+           fill = "Viral cluster identity:") +
+      theme(legend.position = "none",
+            text = element_text(size = 8),
+            axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1))
+  
+  right <- plot_grid(legend, plot, ncol = 1, rel_heights = c(1, 1))
+  
+  A <- plot_grid(left, right, nrow = 1, rel_widths = c(2, 1), labels = "A", label_size = 15)
+
+```
+
+```{r Supplementary Figure S1B - Depth enrichment (Garry Oak)}
+
+# extract depth enrichment in Garry Oak samples for vOTUs
+  depth_enrichment <- 
+    DNA_vOTU_reads %>% 
+    mutate(JUMBO = case_when(LENGTH > 200000 ~ "YES",
+                             TRUE ~ "NO")) %>% 
+    select(NAME, GARRY_OAK_ENRICHMENT, JUMBO)
+
+# create data frame with depth enrichment for visualising shared protein network
+  df <- 
+    VC_nodes %>% 
+    left_join(depth_enrichment, by = c("GENOME" = "NAME")) %>% 
+    filter(!is.na(GARRY_OAK_ENRICHMENT))
+
+# plot shared protein network
+  left <-
+    ggplot(df, aes(x = x, y = y)) + 
+      geom_line(data = filter(edges, GENOME %in% df$GENOME) %>% group_by(PAIR) %>% filter(n() > 1), aes(group = PAIR),
+                color = "black", size = 0.5, alpha = 0.2) +
+      geom_point(data = filter(df, GARRY_OAK_ENRICHMENT == "SUBSURFACE"), aes(fill = GARRY_OAK_ENRICHMENT, shape = JUMBO, size = JUMBO),
+                 stroke = 0.5, colour = "black", alpha = 0.8) +
+      geom_point(data = filter(df, GARRY_OAK_ENRICHMENT == "SURFACE"), aes(fill = GARRY_OAK_ENRICHMENT, shape = JUMBO, size = JUMBO),
+                 stroke = 0.5, colour = "black", alpha = 0.8) +
+      scale_fill_manual(values = c(browns_palette[1], browns_palette[6]),
+                        limits = c("SURFACE", "SUBSURFACE"),
+                        labels = c("Surface-enriched", "Subsurface-enriched")) +
+      scale_shape_manual(values = c(21, 23),
+                         limits = c("NO", "YES"),
+                         labels = c("Non-jumbo", "Jumbo phages"),
+                         name = NULL) +
+      scale_size_manual(values = c(2, 4),
+                        limits = c("NO", "YES"),
+                        labels = c("Non-jumbo", "Jumbo phages"),
+                        name = NULL) +
+      theme_minimal() + 
+      coord_fixed(xlim = c(0, 1),
+                  ylim = c(0, 1)) +
+      guides(fill = guide_legend(override.aes = list(size = c(4, 4),
+                                                     shape = c(21, 21)))) +
+      theme(axis.text = element_blank(),
+            axis.title = element_blank(),
+            text = element_text(size = 10),
+            panel.grid = element_blank(), 
+            legend.direction = "vertical",
+            legend.position = "right") +
+      labs(fill = "Garry Oak enrichment:",
+           shape = "",
+           size = "")
+  
+  legend <- get_legend(left)
+  left <- left + theme(legend.position = "none")
+  
+# plot bar chart of viral cluster identities for dsDNA and ssDNA vOTUs
+  plot <-
+    DNA_vOTU_reads %>% 
+    mutate(GARRY_OAK_ENRICHMENT = case_when(is.na(GARRY_OAK_ENRICHMENT) ~ "NONE",
+                                            TRUE ~ GARRY_OAK_ENRICHMENT)) %>% 
+    ggplot(aes(x = PHAGE, fill = factor(GARRY_OAK_ENRICHMENT, levels = c("NONE", "SURFACE", "SUBSURFACE")))) +
+      geom_bar(stat = "count", position = "fill") +
+      scale_fill_manual(values = c(alpha("white", 0), browns_palette[1], browns_palette[6]),
+                        limits = c("NONE", "SURFACE", "SUBSURFACE"),
+                        labels = c(NA, "Surface-enriched", "Subsurface-enriched")) +
+      scale_x_discrete(breaks = c("dsDNAphage", "ssDNA"),
+                       labels = c("dsDNA", "ssDNA")) +
+      labs(x = "",
+           y = "Proportion\nof vOTUs",
+           fill = "Depth enrichment:") +
+      theme(legend.position = "none",
+            text = element_text(size = 8),
+            axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1))
+  
+  right <- plot_grid(legend, plot, ncol = 1, rel_heights = c(1, 1))
+  
+  B <- plot_grid(left, right, nrow = 1, rel_widths = c(2, 1), labels = "B", label_size = 15)
+
+```
+
+```{r Supplementary Figure S1C - Depth enrichment (Hilly grassland)}
+
+# extract depth enrichment in Hilly grassland samples for vOTUs
+  depth_enrichment <- 
+    DNA_vOTU_reads %>% 
+    mutate(JUMBO = case_when(LENGTH > 200000 ~ "YES",
+                             TRUE ~ "NO")) %>% 
+    select(NAME, HILLY_GRASSLAND_ENRICHMENT, JUMBO)
+
+# create data frame with depth enrichment for visualising shared protein network
+  df <- 
+    VC_nodes %>% 
+    left_join(depth_enrichment, by = c("GENOME" = "NAME")) %>% 
+    filter(!is.na(HILLY_GRASSLAND_ENRICHMENT))
+
+# plot shared protein network
+  left <-
+    ggplot(df, aes(x = x, y = y)) + 
+      geom_line(data = filter(edges, GENOME %in% df$GENOME) %>% group_by(PAIR) %>% filter(n() > 1), aes(group = PAIR),
+                color = "black", size = 0.5, alpha = 0.2) +
+      geom_point(data = filter(df, HILLY_GRASSLAND_ENRICHMENT == "SUBSURFACE" & JUMBO == "NO"), aes(fill = HILLY_GRASSLAND_ENRICHMENT, shape = JUMBO, size = JUMBO),
+                 stroke = 0.5, colour = "black", alpha = 0.8) +
+      geom_point(data = filter(df, HILLY_GRASSLAND_ENRICHMENT == "SURFACE" & JUMBO == "NO"), aes(fill = HILLY_GRASSLAND_ENRICHMENT, shape = JUMBO, size = JUMBO),
+                 stroke = 0.5, colour = "black", alpha = 0.8) +
+      geom_point(data = filter(df, HILLY_GRASSLAND_ENRICHMENT == "SUBSURFACE" & JUMBO == "YES"), aes(fill = HILLY_GRASSLAND_ENRICHMENT, shape = JUMBO, size = JUMBO),
+                 stroke = 0.5, colour = "white", alpha = 0.8) +
+      geom_point(data = filter(df, HILLY_GRASSLAND_ENRICHMENT == "SURFACE" & JUMBO == "YES"), aes(fill = HILLY_GRASSLAND_ENRICHMENT, shape = JUMBO, size = JUMBO),
+                 stroke = 0.5, colour = "white", alpha = 0.8) +
+      scale_fill_manual(values = c(browns_palette[1], browns_palette[6]),
+                        limits = c("SURFACE", "SUBSURFACE"),
+                        labels = c("Surface-enriched", "Subsurface-enriched")) +
+      scale_shape_manual(values = c(21, 23),
+                         limits = c("NO", "YES"),
+                         labels = c("Non-jumbo", "Jumbo phages"), 
+                         name = NULL) +
+      scale_size_manual(values = c(2, 4),
+                        limits = c("NO", "YES"),
+                        labels = c("Non-jumbo", "Jumbo phages"), 
+                        name = NULL) +
+      theme_minimal() + 
+      coord_fixed(xlim = c(0, 1),
+                  ylim = c(0, 1)) +
+      guides(fill = guide_legend(override.aes = list(size = c(4, 4),
+                                                     shape = c(21, 21),
+                                                     colour = c("black", "black"),
+                                                     alpha = c(0.8, 0.8))),
+             shape = guide_legend(override.aes = list(size = c(2, 4),
+                                                      stroke = c(0.5, 0.5),
+                                                      colour = c("black", "black")))) +
+      theme(axis.text = element_blank(),
+            axis.title = element_blank(),
+            text = element_text(size = 10),
+            panel.grid = element_blank(), 
+            legend.spacing.y = unit(1, "mm"),
+            legend.direction = "vertical",
+            legend.position = "right") +
+      labs(fill = "Hilly grassland enrichment:")
+  
+  legend <- get_legend(left)
+  left <- left + theme(legend.position = "none")
+  
+# plot bar chart of viral cluster identities for dsDNA and ssDNA vOTUs
+  plot <-
+    DNA_vOTU_reads %>% 
+    mutate(HILLY_GRASSLAND_ENRICHMENT = case_when(is.na(HILLY_GRASSLAND_ENRICHMENT) ~ "NONE",
+                                                  TRUE ~ HILLY_GRASSLAND_ENRICHMENT)) %>% 
+    ggplot(aes(x = PHAGE, fill = factor(HILLY_GRASSLAND_ENRICHMENT, levels = c("NONE", "SURFACE", "SUBSURFACE")))) +
+      geom_bar(stat = "count", position = "fill") +
+      scale_fill_manual(values = c(alpha("white", 0), browns_palette[1], browns_palette[6]),
+                        limits = c("NONE", "SURFACE", "SUBSURFACE"),
+                        labels = c(NA, "Surface-enriched", "Subsurface-enriched")) +
+      scale_x_discrete(breaks = c("dsDNAphage", "ssDNA"),
+                       labels = c("dsDNA", "ssDNA")) +
+      labs(x = "",
+           y = "Proportion\nof vOTUs",
+           fill = "Depth enrichment:") +
+      theme(legend.position = "none",
+            text = element_text(size = 8),
+            axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1))
+  
+  right <- plot_grid(legend, plot, ncol = 1, rel_heights = c(1, 1))
+  
+  C <- plot_grid(left, right, nrow = 1, rel_widths = c(2, 1), labels = "C", label_size = 15)
+
+```
+
+```{r Supplementary Figure S1D - vOTUs carrying AMGs}
+
+# import viral gene annotations
+  DNA_vOTU_gene_annotations <- 
+    as_tibble(read.delim(file = here("Data/DNA_vOTU_gene_annotations.csv"), sep = ","))
+
+# filter DRAMv annotations for AMGs
+  AMG_annotations <-
+    DNA_vOTU_gene_annotations %>% 
+    left_join(select(DNA_vOTU_reads, c(NAME, LENGTH, CHECKV_QUALITY)), by = "NAME") %>% 
+    filter(auxiliary_score == 1 | # at least one hallmark gene on the left and right flank
+           auxiliary_score == 2 | # viral gene and viral-like gene on flanks
+           auxiliary_score == 3) %>% # viral-like genes on both flanks
+    filter(grepl("M", amg_flags)) %>% # keep hits involved in metabolism
+    filter(grepl("F", amg_flags)) %>% # keep hits where the gene is within 5000 bases of the end of the contig
+    filter(LENGTH >= 10000 | CHECKV_QUALITY == "Complete") %>% # likely complete viral genomes
+    select(NAME, LOCUS, LENGTH, CHECKV_QUALITY, gene_position:PHROG_ANNOTATION)
+
+  write.csv(AMG_annotations, file = here("Data/AMG_annotations.csv"), row.names = F)
+  
+# create data frame with AMG carriage for visualising shared protein network
+  df <- 
+    VC_nodes %>% 
+    filter(GENOME %in% AMG_annotations$NAME) %>% 
+    mutate(AMG = case_when(GENOME %in% filter(AMG_annotations, cazy_hits != "")$NAME ~ "CAZyme",
+                           TRUE ~ "Non-CAZyme")) %>% 
+    mutate(JUMBO = case_when(GENOME %in% filter(DNA_vOTU_reads, LENGTH > 200000)$NAME ~ "YES",
+                             TRUE ~ "NO"))
+
+# plot shared protein network
+  left <-
+    ggplot(df, aes(x = x, y = y)) + 
+      geom_line(data = filter(edges, GENOME %in% df$GENOME) %>% group_by(PAIR) %>% filter(n() > 1), aes(group = PAIR),
+                color = "black", size = 0.5, alpha = 0.2) +
+      geom_point(data = filter(df, JUMBO == "NO"), aes(fill = AMG, shape = JUMBO, size = JUMBO),
+                 stroke = 0.5, colour = "black", alpha = 0.8) + # fill = "#7570B3", 
+      geom_point(data = filter(df, JUMBO == "YES"), aes(fill = AMG, shape = JUMBO, size = JUMBO),
+                 stroke = 0.5, colour = "white", alpha = 0.8) + # fill = "#7570B3", 
+      scale_fill_manual(values = c("#E7298A", "#66A61E"),
+                        limits = c("CAZyme", "Non-CAZyme")) +
+      scale_shape_manual(values = c(21, 23),
+                         limits = c("NO", "YES"),
+                         labels = c("Non-jumbo", "Jumbo phages"),
+                         name = NULL) +
+      scale_size_manual(values = c(2, 4),
+                        limits = c("NO", "YES"),
+                        labels = c("Non-jumbo", "Jumbo phages"),
+                        name = NULL) +
+      theme_minimal() + 
+      coord_fixed(xlim = c(0, 1),
+                  ylim = c(0, 1)) +
+      guides(fill = guide_legend(override.aes = list(size = c(4, 4),
+                                                     shape = c(21, 21),
+                                                     colour = c("black", "black"),
+                                                     alpha = c(0.8, 0.8))),
+             shape = guide_legend(override.aes = list(size = c(2, 4),
+                                                      stroke = c(0.5, 0.5),
+                                                      colour = c("black", "black")))) +
+      theme(axis.text = element_blank(),
+            axis.title = element_blank(),
+            text = element_text(size = 10),
+            panel.grid = element_blank(), 
+            legend.spacing.y = unit(1, "mm"),
+            legend.direction = "vertical",
+            legend.position = "right") +
+      labs(fill = "AMG carriage:")
+  
+  legend <- get_legend(left)
+  left <- left + theme(legend.position = "none")
+  
+# plot bar chart of viral cluster identities for dsDNA and ssDNA vOTUs
+  plot <-
+    DNA_vOTU_reads %>% 
+    mutate(AMG = case_when(NAME %in% filter(AMG_annotations, cazy_hits != "")$NAME ~ "CAZyme",
+                           NAME %in% filter(AMG_annotations, cazy_hits == "")$NAME ~ "Non-CAZyme",
+                           TRUE ~ "No AMGs")) %>% 
+    ggplot(aes(x = PHAGE, fill = factor(AMG, levels = c("No AMGs", "Non-CAZyme", "CAZyme")))) +
+      geom_bar(stat = "count", position = "fill") +
+      scale_fill_manual(values = c(alpha("white", 0), "#E7298A", "#66A61E"),
+                        limits = c("No AMGs", "Non-CAZyme", "CAZyme")) +
+      scale_x_discrete(breaks = c("dsDNAphage", "ssDNA"),
+                       labels = c("dsDNA", "ssDNA")) +
+      # coord_cartesian(ylim = c(0, 0.1)) +
+      labs(x = "",
+           y = "Proportion\nof vOTUs",
+           fill = "AMG carriage:") +
+      theme(legend.position = "none",
+            text = element_text(size = 8),
+            axis.text.x = element_text(angle = 30, vjust = 1, hjust = 1))
+  
+  right <- plot_grid(legend, plot, ncol = 1, rel_heights = c(1, 1))
+  
+  D <- plot_grid(left, right, nrow = 1, rel_widths = c(2, 1), labels = "D", label_size = 15)
+
+  rm(list = c("nodes", "edges", "VC_nodes"))
+  
+```
+
+```{r Supplementary Figure S1 - Taxonomic novelty of recovered soil vOTUs}
+
+  plot <- plot_grid(A, B, C, D, ncol = 1, rel_heights = c(1, 1, 1, 1))
+
+  ggsave(plot, width = 170, height = 340, units = "mm", dpi = 300,
+         file = here("Figures/Figure S1.eps"), device = cairo_ps)
+  
+```
+
+# Supplementary Table S4 - Sources of hits to viral sequences in PhageClouds database
+
+```{r Supplementary Table S4 - Sources of hits to viral sequences in PhageClouds database}
+
+  PhageClouds_hits_sources <- 
+    as_tibble(read.csv(here("Data/PhageClouds_hits_sources.csv")))
+
+  write.csv(PhageClouds_hits_sources, file = here("Tables/Table S4.csv"), row.names = F)
+
+```
+
+# Supplementary Figure S2 - Phylogenetic assessment of jumbo phage vOTUs and jumbo-related vOTUs using DNA polymerase gene
+
+```{r Supplementary Figure S2 - Phylogenetic assessment of jumbo phage vOTUs and jumbo-related vOTUs using DNA polymerase gene}
+
+# import DNAP tree file
+  tree <- 
+    read.tree(file = here("Data/DNAP_tree"))
+    
+# root the tree on outgroup (BAM29052)
+  tree <- ape::root(tree, outgroup = "BAM29052")
+  
+# import metadata on inphared reference genomes
+  inphared_data <- 
+    as_tibble(read.delim(here("Data/inphared_data_1Aug2022.tsv"))) %>%
+    select("NAME" = Accession, "DESCRIPTION" = Description, "LENGTH" = `Genome.Length..bp.`, "HOST" = Host, "FAMILY" = Family, "GENUS" = Genus) %>% 
+    mutate(FAMILY = case_when(FAMILY == "Myoviridae" ~ "Former Myoviridae",
+                              TRUE ~ FAMILY))
+# create gene contig index
+  gene_contig_index <- 
+    DNA_vOTU_gene_annotations %>% 
+    select(NAME, LOCUS) %>% 
+    left_join(select(DNA_vOTU_reads, c("NAME", "LENGTH")), by = "NAME")
+  
+# create annotation metadata data frame
+  metadata <- 
+    tibble(LOCUS = tree$tip.label) %>% 
+    left_join(gene_contig_index, by = "LOCUS") %>% 
+    mutate(NAME = case_when(is.na(NAME) ~ word(LOCUS, start = 1, end = 1, sep = "_"),
+                            LOCUS == "BAM29052" ~ "Herpesvirus",
+                            TRUE ~ NAME)) %>% 
+    # correct names that have been updated
+    mutate(NAME = case_when(NAME == "CAKLQF010000001" ~ "CAKLQF020000001",
+                            NAME == "CAKLQF010000017" ~ "CAKLQF020000017",
+                            NAME == "CAKLQF010000032" ~ "CAKLQF020000032",
+                            NAME == "NC" ~ "NC_004820",
+                            TRUE ~ NAME)) %>%
+    left_join(inphared_data, by = "NAME") %>% 
+    # re-label 50 unverifieed genomes missing in inphared metadata file
+    mutate(LABEL = case_when(NAME == "MT835496" ~ "MT835496",
+                             NAME == "MT835570" ~ "MT835570",
+                             NAME == "MT836180" ~ "MT836180",
+                             NAME == "MT835501" ~ "MT835501",
+                             NAME == "MT836494" ~ "MT836494",
+                             NAME == "MT836213" ~ "MT836213",
+                             NAME == "MT835604" ~ "MT835604",
+                             NAME == "MT835885" ~ "MT835885",
+                             NAME == "MT835632" ~ "MT835632",
+                             NAME == "MT836290" ~ "MT836290",
+                             NAME == "MT836081" ~ "MT836081",
+                             NAME == "MT835750" ~ "MT835750",
+                             NAME == "MT835961" ~ "MT835961",
+                             NAME == "MT836709" ~ "MT836709",
+                             NAME == "MT835601" ~ "MT835601",
+                             NAME == "MT835494" ~ "MT835494",
+                             NAME == "MT835496" ~ "MT835496",
+                             NAME == "MT836173" ~ "MT836173",
+                             NAME == "JQ067083" ~ "Pseudomonas phage PaMx13",
+                             NAME == "MT835953" ~ "MT835953",
+                             NAME == "MT835981" ~ "MT835981",
+                             NAME == "MT836050" ~ "MT836050",
+                             NAME == "MT835481" ~ "MT835481",
+                             NAME == "MT835556" ~ "MT835556",
+                             NAME == "MT835764" ~ "MT835764",
+                             NAME == "MT835747" ~ "MT835747",
+                             NAME == "MW495066" ~ "Microcystis phage MaAM05",
+                             NAME == "MT835640" ~ "MT835640",
+                             NAME == "MT838268" ~ "MT838268",
+                             NAME == "MT835490" ~ "MT835490",
+                             NAME == "MT835512" ~ "MT835512",
+                             NAME == "MT835753" ~ "MT835753",
+                             NAME == "MT836467" ~ "MT836467",
+                             NAME == "MT838720" ~ "MT838720",
+                             NAME == "MT836618" ~ "MT836618",
+                             NAME == "MT835881" ~ "MT835881",
+                             NAME == "MT837764" ~ "MT837764",
+                             NAME == "MT835891" ~ "MT835891",
+                             NAME == "MT836087" ~ "MT836087",
+                             NAME == "MT835911" ~ "MT835911",
+                             NAME == "MT835482" ~ "MT835482",
+                             NAME == "MN905546" ~ "Pseudomonas phage PN05",
+                             NAME == "KT319599" ~ "Listeria phage WIL-2",
+                             NAME == "MT836181" ~ "MT836181",
+                             NAME == "MT835536" ~ "MT835536",
+                             NAME == "MT835890" ~ "MT835890",
+                             NAME == "MT836025" ~ "MT836025",
+                             NAME == "MT836709" ~ "MT836709",
+                             TRUE ~ as.character(NA))) %>%
+    mutate(LABEL = case_when(is.na(LABEL) & grepl("DNA", NAME) ~ NAME,
+                             is.na(LABEL) ~ DESCRIPTION,
+                             NAME == "Herpesvirus" ~ "Human alphaherpesvirus 1",
+                             TRUE ~ LABEL)) %>% 
+    mutate(LENGTH = case_when(is.na(LENGTH.x) ~ LENGTH.y,
+                              is.na(LENGTH.y) ~ LENGTH.x)) %>% 
+    mutate(HOST = case_when(grepl("DNA_vOTU", NAME) ~ "vOTU",
+                            is.na(HOST) ~ "Unknown",
+                            TRUE ~ HOST)) %>% 
+    mutate(FAMILY = case_when(grepl("DNA_vOTU", NAME) ~ "vOTU",
+                              is.na(FAMILY) ~ "Unknown",
+                              FAMILY == "Unclassified" ~ "Unknown",
+                              TRUE ~ FAMILY)) %>% 
+    mutate(GENUS = case_when(grepl("DNA_vOTU", NAME) ~ "vOTU",
+                             is.na(GENUS) ~ "Unknown",
+                             GENUS == "Unclassified" ~ "Unknown",
+                             TRUE ~ GENUS)) %>% 
+    select(LOCUS, NAME, LABEL, LENGTH, HOST, FAMILY, GENUS)
+  
+# save circular phylogenetic tree
+  plot <-
+    ggtree(tree, colour = "grey50", size = 0.2) %<+%
+      metadata +
+      geom_text(aes(label = node), size = 0) +
+      layout_circular()
+
+# add annotation layers to phylogenetic tree
+  plot2 <-
+    plot +
+    geom_nodepoint(aes(label = label, subset = !is.na(as.numeric(label)) & as.numeric(label) >= 70 & as.numeric(label) < 80), 
+                   size = 0.2, colour = "grey50", alpha = 0.3) +
+    geom_nodepoint(aes(label = label, subset = !is.na(as.numeric(label)) & as.numeric(label) >= 80 & as.numeric(label) < 90), 
+                   size = 0.4, colour = "grey50", alpha = 0.3) +
+    geom_nodepoint(aes(label = label, subset = !is.na(as.numeric(label)) & as.numeric(label) >= 90), 
+                   size = 0.6, colour = "grey50", alpha = 0.3) +
+    geom_tiplab2(aes(label = LABEL, colour = grepl("DNA_vOTU", LABEL)), align = T, linetype = NA, size = 0.3, offset = 0.2) +
+    geom_tiplab2(aes(label = NA, colour = grepl("DNA_vOTU", LABEL), alpha = grepl("DNA_vOTU", LABEL)), align = T, linetype = "dotted", linesize = 0.05, offset = 0.2) +
+    geom_cladelabel(node = 1329, label = "A", fontsize = 5, offset = 4.4, barsize = 0) +
+    geom_cladelabel(node = 1356, label = "B", fontsize = 5, offset = 4.6, barsize = 0) +
+    geom_cladelabel(node = 370, label = "C", fontsize = 5, offset = 4.1, barsize = 0) +
+    geom_cladelabel(node = 1847, label = "D", fontsize = 5, offset = 3.6, barsize = 0) +
+    geom_cladelabel(node = 1281, label = "E", fontsize = 5, offset = 4.1, barsize = 0) +
+    geom_cladelabel(node = 1872, label = "F", fontsize = 5, offset = 2.9, barsize = 0) +
+    geom_treescale(width = 1, x = 3, fontsize = 3, offset = 4) +
+    scale_colour_manual(values = c("grey50", "goldenrod"), 
+                        guide = "none") +
+    scale_alpha_manual(values = c(0.3, 1.0),
+                       guide = "none")
+  
+# create labels for heatmap
+  heatmap_labels <- metadata %>% unique() %>% select(LOCUS, FAMILY) %>% column_to_rownames("LOCUS")
+# create colour scheme for heatmap
+  heatmap_colours <- c("white", '#1f78b4', "dark olive green", "pink", '#e31a1c', "lime green", '#ff7f00', "cyan", '#6a3d9a', '#FFFF99', "grey90")
+  names(heatmap_colours) <- c("vOTU", "Demerecviridae", "Former Myoviridae", "Herelleviridae", "Molycolviridae", "Peduoviridae", "Podoviridae", "Schitoviridae", "Siphoviridae", "Zierdtviridae", "Unknown")
+  
+# add heatmap layer to phylogenetic tree
+  plot3 <- 
+    gheatmap(plot2, heatmap_labels, offset = 1.4, color = NULL, colnames_position = "top", colnames_angle = 90, colnames_offset_y = 1, hjust = 0, font.size = 2, width = 0.05, colnames = F) +
+      scale_fill_manual(values = heatmap_colours, 
+                        breaks = c("vOTU", "Demerecviridae", "Former Myoviridae", "Herelleviridae",
+                                   "Molycolviridae", "Peduoviridae", "Podoviridae", "Schitoviridae",
+                                   "Siphoviridae", "Zierdtviridae", "Unknown"),
+                        labels = c("vOTU", "Demerecviridae", "Former Myoviridae", "Herelleviridae",
+                                   "Molycolviridae", "Peduoviridae", "Podoviridae", "Schitoviridae",
+                                   "Siphoviridae", "Zierdtviridae", "Other/Unknown"),
+                        name = "Phage Family:") +
+      guides(fill = guide_legend(override.aes = list(colour = c("black", rep("white", 10))))) +
+      theme(legend.position = "bottom",
+            text = element_text(size = 10))
+  
+# save as pdf 6 x 6 inches
+  ggsave(plot3, width = 170, height = 225, units = "mm", dpi = 300,
+         file = here("Figures/Figure S2.eps"), device = cairo_ps)
+    
+```
+
+# Supplementary Figure S3 - Phylogenetic groups A, B, and F from assessment of jumbo phage vOTUs and jumbo-related vOTUs using DNA polymerase gene
+
+```{r Supplementary Figure S3A - Phylogenetic groups A and B from assessment of jumbo phage vOTUs and jumbo-related vOTUs using DNA polymerase gene}
+
+# update annotation metadata data frame
+  metadata2 <-
+    metadata %>% 
+    mutate(LENGTH = case_when(NAME == "MT835496" ~ as.integer(159206),
+                              NAME == "MT835570" ~ as.integer(32488),
+                              NAME == "MT836180" ~ as.integer(15601),
+                              NAME == "MT835501" ~ as.integer(54463),
+                              NAME == "MT836494" ~ as.integer(10059),
+                              NAME == "MT836213" ~ as.integer(14083),
+                              NAME == "MT835604" ~ as.integer(35036),
+                              NAME == "MT835885" ~ as.integer(15914),
+                              NAME == "MT835632" ~ as.integer(23709),
+                              NAME == "MT836290" ~ as.integer(11336),
+                              NAME == "MT836081" ~ as.integer(13142),
+                              NAME == "MT835750" ~ as.integer(19297),
+                              NAME == "MT835961" ~ as.integer(31546),
+                              NAME == "MT836709" ~ as.integer(12256),
+                              NAME == "MT835494" ~ as.integer(12256),
+                              NAME == "MT835601" ~ as.integer(25781),
+                              NAME == "MT835496" ~ as.integer(159206),
+                              NAME == "MT836173" ~ as.integer(12185),
+                              NAME == "JQ067083" ~ as.integer(66450),
+                              NAME == "MT835953" ~ as.integer(18731),
+                              NAME == "MT835981" ~ as.integer(14289),
+                              NAME == "MT836050" ~ as.integer(13488),
+                              NAME == "MT835481" ~ as.integer(74734),
+                              NAME == "MT835556" ~ as.integer(38471),
+                              NAME == "MT835764" ~ as.integer(18777),
+                              NAME == "MT835747" ~ as.integer(19333),
+                              NAME == "MW495066" ~ as.integer(273876),
+                              NAME == "MT835640" ~ as.integer(23302),
+                              NAME == "MT838268" ~ as.integer(10553),
+                              NAME == "MT835490" ~ as.integer(60344),
+                              NAME == "MT835512" ~ as.integer(44479),
+                              NAME == "MT835753" ~ as.integer(19178),
+                              NAME == "MT836467" ~ as.integer(10206),
+                              NAME == "MT838720" ~ as.integer(5434),
+                              NAME == "MT836618" ~ as.integer(18369),
+                              NAME == "MT835881" ~ as.integer(22433),
+                              NAME == "MT837764" ~ as.integer(11113),
+                              NAME == "MT835891" ~ as.integer(15829),
+                              NAME == "MT836087" ~ as.integer(13099),
+                              NAME == "MT835911" ~ as.integer(18569),
+                              NAME == "MT835482" ~ as.integer(72712),
+                              NAME == "MN905546" ~ as.integer(214121),
+                              NAME == "KT319599" ~ as.integer(27697),
+                              NAME == "MT836181" ~ as.integer(16395),
+                              NAME == "MT835536" ~ as.integer(40191),
+                              NAME == "MT835890" ~ as.integer(15833),
+                              NAME == "MT836025" ~ as.integer(13786),
+                              NAME == "MT836709" ~ as.integer(12256),
+                              TRUE ~ LENGTH)) %>% 
+    mutate(LABEL = case_when(is.na(LABEL) & is.na(LENGTH) ~ as.character(NA),
+                             TRUE ~ paste(LABEL, " (", format(LENGTH, big.mark = ",", trim = T), ")", sep = "")))
+
+# save rectangular phylogenetic tree
+  plot <-
+    ggtree(tree, colour = "grey50", size = 1, layout = "rectangular") %<+%
+    metadata2 +
+    geom_text(aes(label = node), size = 0)
+
+# visualise clade containing Groups A and B
+  plot_AB <-
+    viewClade(plot, node = 1326, xmax_adjust = -1.25) +
+    geom_tiplab(aes(label = LABEL, colour = grepl("DNA_vOTU", LABEL)), align = T, linetype = NA, size = 2, offset = -1.8) +
+    geom_tiplab(aes(label = NA, colour = grepl("DNA_vOTU", LABEL), alpha = grepl("DNA_vOTU", LABEL)), align = T, linetype = "dotted", linesize = 0.3, offset = -1.8) +
+    geom_tippoint(aes(fill = FAMILY), shape = 21, size = 2.5, alpha = 0.6) +
+    geom_cladelabel(node = 1329, label = "A", fontsize = 5, offset = 0.75, barsize = 0, hjust = -0.2) +
+    geom_cladelabel(node = 1356, label = "B", fontsize = 5, offset = 0.90, barsize = 0) +
+    geom_nodepoint(aes(label = label, subset = !is.na(as.numeric(label)) & as.numeric(label) >= 70 & as.numeric(label) < 80),
+                   size = 1, colour = "grey50", alpha = 0.4) +
+    geom_nodepoint(aes(label = label, subset = !is.na(as.numeric(label)) & as.numeric(label) >= 80 & as.numeric(label) < 90),
+                   size = 1.5, colour = "grey50", alpha = 0.4) +
+    geom_nodepoint(aes(label = label, subset = !is.na(as.numeric(label)) & as.numeric(label) >= 90),
+                   size = 2, colour = "grey50", alpha = 0.4) +
+    geom_treescale(width = 0.5, fontsize = 5, y = 220, x = 1.85, offset = 2) +
+    scale_fill_manual(values = heatmap_colours, 
+                      breaks = c("vOTU", "Other/Unknown", "Former Myoviridae", "Siphoviridae", "Podoviridae", "Zierdtviridae", "Peduoviridae", "Molycolviridae", "Herelleviridae", "Demerecviridae", "Schitoviridae"),
+                      name = "Phage Family:") +
+    scale_colour_manual(values = c("grey50", "goldenrod"),
+                        guide = "none") +
+    scale_alpha_manual(values = c(0.3, 1.0),
+                       guide = "none") +
+    theme(legend.position = "none")
+  
+  plot_AB <- plot_grid(plot_AB, labels = "A", label_size = 15)
+
+```
+
+```{r Supplementary Figure S3B - Phylogenetic group F from assessment of jumbo phage vOTUs and jumbo-related vOTUs using DNA polymerase gene}
+
+# update annotation metadata data frame
+  metadata2 <-
+    metadata %>% 
+    mutate(LENGTH = case_when(NAME == "MT835496" ~ as.integer(159206),
+                              NAME == "MT835570" ~ as.integer(32488),
+                              NAME == "MT836180" ~ as.integer(15601),
+                              NAME == "MT835501" ~ as.integer(54463),
+                              NAME == "MT836494" ~ as.integer(10059),
+                              NAME == "MT836213" ~ as.integer(14083),
+                              NAME == "MT835604" ~ as.integer(35036),
+                              NAME == "MT835885" ~ as.integer(15914),
+                              NAME == "MT835632" ~ as.integer(23709),
+                              NAME == "MT836290" ~ as.integer(11336),
+                              NAME == "MT836081" ~ as.integer(13142),
+                              NAME == "MT835750" ~ as.integer(19297),
+                              NAME == "MT835961" ~ as.integer(31546),
+                              NAME == "MT836709" ~ as.integer(12256),
+                              NAME == "MT835494" ~ as.integer(12256),
+                              NAME == "MT835601" ~ as.integer(25781),
+                              NAME == "MT835496" ~ as.integer(159206),
+                              NAME == "MT836173" ~ as.integer(12185),
+                              NAME == "JQ067083" ~ as.integer(66450),
+                              NAME == "MT835953" ~ as.integer(18731),
+                              NAME == "MT835981" ~ as.integer(14289),
+                              NAME == "MT836050" ~ as.integer(13488),
+                              NAME == "MT835481" ~ as.integer(74734),
+                              NAME == "MT835556" ~ as.integer(38471),
+                              NAME == "MT835764" ~ as.integer(18777),
+                              NAME == "MT835747" ~ as.integer(19333),
+                              NAME == "MW495066" ~ as.integer(273876),
+                              NAME == "MT835640" ~ as.integer(23302),
+                              NAME == "MT838268" ~ as.integer(10553),
+                              NAME == "MT835490" ~ as.integer(60344),
+                              NAME == "MT835512" ~ as.integer(44479),
+                              NAME == "MT835753" ~ as.integer(19178),
+                              NAME == "MT836467" ~ as.integer(10206),
+                              NAME == "MT838720" ~ as.integer(5434),
+                              NAME == "MT836618" ~ as.integer(18369),
+                              NAME == "MT835881" ~ as.integer(22433),
+                              NAME == "MT837764" ~ as.integer(11113),
+                              NAME == "MT835891" ~ as.integer(15829),
+                              NAME == "MT836087" ~ as.integer(13099),
+                              NAME == "MT835911" ~ as.integer(18569),
+                              NAME == "MT835482" ~ as.integer(72712),
+                              NAME == "MN905546" ~ as.integer(214121),
+                              NAME == "KT319599" ~ as.integer(27697),
+                              NAME == "MT836181" ~ as.integer(16395),
+                              NAME == "MT835536" ~ as.integer(40191),
+                              NAME == "MT835890" ~ as.integer(15833),
+                              NAME == "MT836025" ~ as.integer(13786),
+                              NAME == "MT836709" ~ as.integer(12256),
+                              TRUE ~ LENGTH)) %>% 
+    mutate(LABEL = case_when(is.na(LABEL) & is.na(LENGTH) ~ as.character(NA),
+                             TRUE ~ paste(LABEL, " (", format(LENGTH, big.mark = ",", trim = T), ")", sep = "")))
+
+# save rectangular phylogenetic tree
+  plot <-
+    ggtree(tree, colour = "grey50", size = 1, layout = "rectangular") %<+%
+    metadata2 +
+    geom_text(aes(label = node), size = 0)
+
+# visualise clade containing Group F
+  plot_F <-
+    viewClade(plot, node = 1868, xmax_adjust = 0.6) +
+    geom_tiplab(aes(label = LABEL, colour = grepl("DNA_vOTU", LABEL)), align = T, linetype = NA, size = 2, offset = -0.2) +
+    geom_tiplab(aes(label = NA, colour = grepl("DNA_vOTU", LABEL), alpha = grepl("DNA_vOTU", LABEL)), align = T, linetype = "dotted", linesize = 0.3, offset = -0.2) +
+    geom_tippoint(aes(fill = FAMILY), shape = 21, size = 3, alpha = 0.6) +
+    geom_cladelabel(node = 1872, label = "F", fontsize = 5, offset = 0.8, barsize = 0) +
+    geom_nodepoint(aes(label = label, subset = !is.na(as.numeric(label)) & as.numeric(label) >= 70 & as.numeric(label) < 80),
+                   size = 1.5, colour = "grey50", alpha = 0.4) +
+    geom_nodepoint(aes(label = label, subset = !is.na(as.numeric(label)) & as.numeric(label) >= 80 & as.numeric(label) < 90),
+                   size = 2, colour = "grey50", alpha = 0.4) +
+    geom_nodepoint(aes(label = label, subset = !is.na(as.numeric(label)) & as.numeric(label) >= 90),
+                   size = 2.5, colour = "grey50", alpha = 0.4) +
+    geom_treescale(width = 0.5, fontsize = 5, y = 742, x = 3.2, offset = 0.6) +
+    scale_fill_manual(values = heatmap_colours, 
+                      breaks = c("vOTU", "Other/Unknown", "Former Myoviridae", "Siphoviridae", "Podoviridae", "Zierdtviridae", "Peduoviridae", "Molycolviridae", "Herelleviridae", "Demerecviridae", "Schitoviridae"),
+                      name = "Phage Family:") +
+    scale_colour_manual(values = c("grey50", "goldenrod"),
+                        guide = "none") +
+    scale_alpha_manual(values = c(0.3, 1.0),
+                       guide = "none") +
+    theme(legend.position = "none")
+  
+  plot_F <- plot_grid(plot_F, labels = "B", label_size = 15)
+
+```
+
+```{r Supplementary Figure S3 - Phylogenetic groups A, B, and F from assessment of jumbo phage vOTUs and jumbo-related vOTUs using DNA polymerase gene}
+
+  ggsave(plot_AB, width = 170, height = 225, units = "mm", dpi = 300,
+         file = here("Figures/Figure S3A.eps"), device = cairo_ps)
+
+  ggsave(plot_F, width = 170, height = 225, units = "mm", dpi = 300,
+         file = here("Figures/Figure S3B.eps"), device = cairo_ps)
+
+```
+
+# Figure 1 - Population-level assembly of soil viral communities throughout soil depth
+
+```{r Figure 1A - Alpha diversity of viral communities}
+
+# calculate vOTU CPM
+  CPM <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    mutate(across(contains("Sage"), ~round(.))) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME")
+
+# generate phyloSeq vOTU matrix
+  phyloseq <- otu_table(CPM, taxa_are_rows = T)
+
+# create table of observed vOTU abundance and alpha diversity measures 
+  alpha_diversity <-
+    estimate_richness(phyloseq) %>%
+    as_tibble(., rownames = "SAMPLE") %>%
+    mutate(Pielou = Shannon / log(Observed)) %>%
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+
+# create data frame for plotting 
+  df <- 
+    alpha_diversity %>% 
+    select(SAMPLE, "Richness" = Observed, "Evenness" = Pielou, "Diversity" = Shannon, DEPTH, SITE) %>% 
+    pivot_longer(c(Richness, Evenness, Diversity), names_to = "METRIC", values_to = "VALUE") %>% 
+    mutate(METRIC = factor(METRIC, levels = c("Richness", "Evenness", "Diversity")))
+  
+# compute correlation coefficients for alpha diversity across soil depth
+  stat_correlation <-
+    df %>%
+    nest(data = c(-SITE, -METRIC)) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$DEPTH, .x$VALUE, method = "pearson")),
+           lm_test = map(data, ~lm(.x$VALUE ~ .x$DEPTH)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    filter(cor_tidied.p.value < 0.05) %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, METRIC, label) %>% 
+    mutate(XPOS = c(30, 90, 90, 90),
+           YPOS = c(7500, 8000, 0.83, 7.5))
+    
+# visualise alpha diversity of viral communities
+  plot <-
+    ggplot(df, aes(x = DEPTH, y = VALUE)) +
+      geom_point(aes(shape = SITE),
+                 colour = "grey25", size = 2, alpha = 0.6, stroke = 0) +
+      geom_smooth(data = filter(df, paste(SITE, METRIC) %in% paste(stat_correlation$SITE, stat_correlation$METRIC)),
+                  colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                hjust = 0, size = 3, lineheight = 1) +
+      facet_grid(rows = vars(METRIC), cols = vars(SITE),
+                 scales = "free_y") +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                         labels = c("Hilly grassland", "Garry Oak"), 
+                         values = c(15, 17),
+                         guide = "none") + 
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)", 
+           y = "",
+           title = "")
+  
+  A <- plot_grid(plot, labels = "A", label_size = 15)
+  
+```
+
+```{r Figure 1B - Beta diversity of viral communities}
+
+# calculate vOTU CPM
+  CPM <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    mutate(across(contains("Sage"), ~sqrt(.))) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME") %>% 
+    t()
+
+# compute Bray-Curtis dissimilarity on CPM
+  CPM_dist <- vegdist(CPM, method = "bray")
+
+# create metadata table
+  metadata <- 
+    tibble(SAMPLE = rownames(as.matrix(CPM_dist))) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ "115 cm",
+                             grepl("100", SAMPLE) ~ "100 cm",
+                             grepl("80", SAMPLE) ~ "80 cm",
+                             grepl("60", SAMPLE) ~ "60 cm",
+                             grepl("40", SAMPLE) ~ "40 cm",
+                             grepl("20", SAMPLE) ~ "20 cm")) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+
+# calculate NMDS ordination
+  MDS <- metaMDS(CPM_dist,
+                 distance = "bray",
+                 autotransform = F,
+                 k = 2,
+                 trace = F)
+
+# create data frame of sample coordinates
+  df <-
+    as_tibble(MDS$points, rownames = "SAMPLE") %>%
+    left_join(metadata, by = "SAMPLE")
+  
+# create column metadata table
+  metadata <- 
+    tibble(SAMPLE = rownames(as.matrix(CPM_dist))) %>%
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                              grepl("100", SAMPLE) ~ 100,
+                              grepl("80", SAMPLE) ~ 80,
+                              grepl("60", SAMPLE) ~ 60,
+                              grepl("40", SAMPLE) ~ 40,
+                              grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(DEPTH = as.vector(scale(DEPTH)))
+  
+# run PERMANOVA on SITE and DEPTH factors
+  permanova <- 
+    adonis2(CPM_dist~SITE + DEPTH, 
+            data = metadata, 
+            permutations = 999, 
+            method = "bray", 
+            by = "margin") %>%
+    tidy() 
+    
+# plot NMDS coordinates
+  plot <-
+    ggplot(df, aes(MDS1,MDS2)) +
+      geom_point(aes(fill = DEPTH, shape = SITE), 
+                 size = 5, alpha = 0.8, stroke = 0) +
+      annotate("text", x = -0.7, y = 0.4, size = 3.5, hjust = 0, lineheight = 1,
+               label = paste("Stress =", format(round(MDS$stress, 2), nsmall = 2))) +
+      annotate("text", x = -0.7, y = -0.3, size = 3.5, hjust = 0, lineheight = 1,
+               label = paste("Site = ", signif(100*permanova$R2[1], 3), "%",
+                             "\np = ", signif(permanova$p.value[1], 3), sep = "")) +
+      annotate("text", x = -0.4, y = -0.3, size = 3.5, hjust = 0, lineheight = 1,
+               label = paste("Soil depth = ", signif(100*permanova$R2[2], 3), "%",
+                             "\np = ", signif(permanova$p.value[2], 3), sep = "")) +
+      # coord_fixed() +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                         labels = c("Hilly grassland", "Garry Oak"),
+                         values = c(22, 24)) +
+      scale_fill_manual(breaks = c("20 cm", "40 cm", "60 cm", "80 cm", "100 cm", "115 cm"),
+                        labels = c("20 cm", "40 cm", "60 cm", "80 cm", "100 cm", "115 cm"),
+                        values = browns_palette) +
+      scale_y_continuous(limits = c(-0.35, 0.45)) +
+      guides(fill = guide_legend(override.aes = list(shape = 21)),
+             shape = guide_legend(override.aes = list(fill = "white", stroke = 1, size = 3))) +
+      theme(axis.text = element_blank(),
+            axis.ticks = element_blank(),
+            text = element_text(size = 10)) +
+      labs(x = "Coordinate 1",
+           y = "Coordinate 2",
+           fill = "Soil depth:",
+           shape = "Site:",
+           title = "")
+  
+  B <- plot_grid(plot, labels = "B", label_size = 15)
+
+```
+
+```{r Figure 1C - Distance-decay relationship of viral community structure}
+
+# calculate vOTU CPM
+  CPM <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    mutate(across(contains("Sage"), ~sqrt(.))) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME") %>% 
+    t()
+
+# compute Bray-Curtis dissimilarity on CPM
+  CPM_dist <- vegdist(CPM, method = "bray")
+
+# create data frame of pairwise distances
+  df <- 
+    CPM_dist %>% 
+    dist2list(.) %>% 
+    as_tibble() %>% 
+    mutate(across(c(col, row), as.character)) %>% 
+    filter(col < row) %>% 
+    filter((grepl("Sage1", col) & grepl("Sage1", row)) |
+           (grepl("Sage2", col) & grepl("Sage2", row))) %>%
+    mutate(SITE = case_when(grepl("Sage1", col) & grepl("Sage1", row) ~ "Hilly grassland",
+                            grepl("Sage2", col) & grepl("Sage2", row) ~ "Garry Oak")) %>% 
+    mutate(DEPTH1 = case_when(grepl("113", col) | grepl("115", col) ~ 115,
+                              grepl("100", col) ~ 100,
+                              grepl("80", col) ~ 80,
+                              grepl("60", col) ~ 60,
+                              grepl("40", col) ~ 40,
+                              grepl("20", col) ~ 20)) %>% 
+    mutate(DEPTH2 = case_when(grepl("113", row) | grepl("115", row) ~ 115,
+                              grepl("100", row) ~ 100,
+                              grepl("80", row) ~ 80,
+                              grepl("60", row) ~ 60,
+                              grepl("40", row) ~ 40,
+                              grepl("20", row) ~ 20)) %>% 
+    mutate(DEPTH_DIFFERENCE = abs(DEPTH1 - DEPTH2)) %>% 
+    rename(DISTANCE = value)
+
+# compute correlation coefficients for pairwise distances and difference in soil depth
+  stat_correlation <- 
+    df %>% 
+    nest(data = -SITE) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$DEPTH_DIFFERENCE, .x$DISTANCE, method = "pearson")),
+           lm_test = map(data, ~lm(.x$DISTANCE ~ .x$DEPTH_DIFFERENCE)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, label) %>% 
+    mutate(XPOS = c(70, 70),
+           YPOS = c(0.17, 0.14))
+  
+# plot correlation plot
+  plot <- 
+    ggplot(df, aes(x = DEPTH_DIFFERENCE, y = DISTANCE)) +
+      geom_point(aes(shape = SITE),
+                 color = "grey25", size = 2, alpha = 0.6, stroke = 0) +
+      geom_smooth(colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                size = 3, hjust = 0, lineheight = 1) +
+      facet_grid(cols = vars(SITE)) +
+      scale_x_continuous(limits = c(0, 100),
+                         breaks = seq(0, 100, 20)) +
+      scale_y_continuous(limits = c(0, 0.6),
+                         breaks = seq(0, 0.6, 0.1)) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                         labels = c("Hilly grassland", "Garry Oak"), 
+                         values = c(15, 17),
+                         guide = "none") + 
+      theme(text = element_text(size = 10)) +
+      labs(x = "Difference in soil depth (cm)",
+           y = "Pairwise Bray-Curtis dissimilarity",
+           title = "")
+  
+  C <- plot_grid(plot, labels = "C", label_size = 15)
+
+```
+
+```{r Figure 1 - Population-level assembly of soil viral communities throughout soil depth}
+
+  plot <- plot_grid(A, B, C, ncol = 1, rel_heights = c(1.1, 1, 0.9))
+
+  ggsave(plot, width = 170, height = 225, units = "mm", dpi = 300,
+         file = here("Figures/Figure 1.eps"), device = cairo_ps)
+
+```
+
+# Supplementary Figure S4 - Prevalence of viral populations
+
+```{r Supplementary Figure S4 - Prevalence of viral populations}
+
+# calculate prevalence of viral populations
+  df <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    select(NAME, contains("Sage")) %>%
+    pivot_longer(cols = contains("Sage"), names_to = "SAMPLE", values_to = "CPM") %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    group_by(NAME, SITE) %>% 
+    summarise(PERCENT_SAMPLES = sum(CPM > 0)/12, .groups = "drop") %>% 
+    group_by(SITE, PERCENT_SAMPLES) %>% 
+    summarise(PERCENT_vOTUs = n_distinct(NAME)/10196, .groups = "drop")
+  
+# visualise prevalence of viral populations
+  plot <-
+    ggplot(df, aes(x = PERCENT_SAMPLES, y = PERCENT_vOTUs)) +
+      geom_bar(stat = "identity") +
+      geom_text(aes(label = sprintf("%.1f", 100*round(PERCENT_vOTUs, 3))), vjust = -0.7, size = 3) +
+      facet_grid(cols = vars(SITE)) +
+      scale_y_continuous(labels = scales::percent_format(),
+                         limits = c(0, 0.75),
+                         breaks = seq(0, 0.75, 0.25)) +
+      scale_x_continuous(labels = scales::percent_format()) +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Percentage of samples",
+           y = "Percentage of vOTUs")
+  
+  ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
+         file = here("Figures/Figure S4.eps"), device = cairo_ps)
+
+```
+
+# Supplementary Figure S5 - Overlap in depth-enrichment of viral populations between sites
+
+```{r save proportion of community abundance represented by depth-specific vOTUs (Hilly grassland)}
+
+# save raw vOTU reads
+  raw_reads <- 
+    DNA_vOTU_reads %>% 
+    select(NAME, contains("Sage")) %>% 
+    column_to_rownames("NAME")
+
+# create column metadata table
+  metadata <- 
+    tibble(SAMPLE = colnames(raw_reads)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly_grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry_Oak")) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ "SUBSURFACE",
+                              grepl("100", SAMPLE) ~ "SUBSURFACE",
+                              grepl("80", SAMPLE) ~ "SUBSURFACE",
+                              grepl("60", SAMPLE) ~ "SUBSURFACE",
+                              grepl("40", SAMPLE) ~ "SUBSURFACE",
+                              grepl("20", SAMPLE) ~ "SURFACE")) %>% 
+    mutate(SITE = factor(SITE, levels = c("Hilly_grassland", "Garry_Oak"))) %>% 
+    mutate(DEPTH = factor(DEPTH, levels = c("SURFACE", "SUBSURFACE")))
+    
+# construct DESeqDataSet object
+  ddsFullCountTable <- DESeqDataSetFromMatrix(
+    countData = raw_reads, 
+    colData = metadata,
+    design = ~ SITE * DEPTH)
+  
+# run DESeq2
+  dds <- DESeq(ddsFullCountTable, fitType = "local", quiet = T)
+  # to probe specific coefficient (listed by resultsNames(dds))
+
+# save log2 fold changes in vOTU abundance by depth (in Hilly grassland)
+  res_grassland <- as_tibble(results(dds, name = "DEPTH_SUBSURFACE_vs_SURFACE"), rownames = "NAME")
+  
+# save subsurface-enriched vOTUs
+  signif_subsurface <- 
+    res_grassland %>% 
+    filter(padj < 0.05) %>% 
+    filter(log2FoldChange > 1) %>% 
+    pull("NAME")
+  
+# save surface-enriched vOTUs
+  signif_surface <- 
+    res_grassland %>% 
+    filter(padj < 0.05) %>% 
+    filter(log2FoldChange < -1) %>% 
+    pull("NAME")
+  
+# save proportion of community abundance represented by depth-specific vOTUs (Hilly grassland)
+  depth_means_grassland <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    select(NAME, contains("Sage")) %>%
+    pivot_longer(cols = contains("Sage"), names_to = "SAMPLE", values_to = "CPM") %>% 
+    mutate(SIGNIF = ifelse(NAME %in% signif_subsurface, "SUBSURFACE",
+                           ifelse(NAME %in% signif_surface, "SURFACE", "NS"))) %>% 
+    mutate(SIGNIF = factor(SIGNIF, levels = c("SUBSURFACE", "SURFACE", "NS"))) %>% 
+    group_by(SAMPLE, SIGNIF) %>% 
+    summarise(AggRelAb = sum(CPM), .groups = "drop") %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                              grepl("100", SAMPLE) ~ 100,
+                              grepl("80", SAMPLE) ~ 80,
+                              grepl("60", SAMPLE) ~ 60,
+                              grepl("40", SAMPLE) ~ 40,
+                              grepl("20", SAMPLE) ~ 20)) %>% 
+    group_by(SITE, DEPTH, SIGNIF) %>% 
+    summarise(MeanRelAb = mean(AggRelAb), .groups = "drop") %>% 
+    mutate(CONTRAST = "Effect of depth in Hilly grassland")
+
+```
+
+```{r save proportion of community abundance represented by depth-specific vOTUs (Garry Oak)}
+
+# save raw vOTU reads
+  raw_reads <- 
+    DNA_vOTU_reads %>% 
+    select(NAME, contains("Sage")) %>% 
+    column_to_rownames("NAME")
+
+# create column metadata table
+  metadata <- 
+    tibble(SAMPLE = colnames(raw_reads)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly_grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry_Oak")) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ "SUBSURFACE",
+                              grepl("100", SAMPLE) ~ "SUBSURFACE",
+                              grepl("80", SAMPLE) ~ "SUBSURFACE",
+                              grepl("60", SAMPLE) ~ "SUBSURFACE",
+                              grepl("40", SAMPLE) ~ "SUBSURFACE",
+                              grepl("20", SAMPLE) ~ "SURFACE")) %>% 
+    mutate(SITE = factor(SITE, levels = c("Garry_Oak", "Hilly_grassland"))) %>% 
+    mutate(DEPTH = factor(DEPTH, levels = c("SURFACE", "SUBSURFACE")))
+    
+# construct DESeqDataSet object
+  ddsFullCountTable <- DESeqDataSetFromMatrix(
+    countData = raw_reads, 
+    colData = metadata,
+    design = ~ SITE * DEPTH)
+  
+# run DESeq2
+  dds <- DESeq(ddsFullCountTable, fitType = "local", quiet = T)
+  # to probe specific coefficient (listed by resultsNames(dds))
+
+# save log2 fold changes in vOTU abundance by depth (in Garry Oak)
+  res_oak <- as_tibble(results(dds, name = "DEPTH_SUBSURFACE_vs_SURFACE"), rownames = "NAME")
+  
+# save subsurface-enriched vOTUs
+  signif_subsurface <- 
+    res_oak %>% 
+    filter(padj < 0.05) %>% 
+    filter(log2FoldChange > 1) %>% 
+    pull("NAME")
+  
+# save surface-enriched vOTUs
+  signif_surface <- 
+    res_oak %>% 
+    filter(padj < 0.05) %>% 
+    filter(log2FoldChange < -1) %>% 
+    pull("NAME")
+  
+# save proportion of community abundance represented by depth-specific vOTUs (Garry Oak)
+  depth_means_oak <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    select(NAME, contains("Sage")) %>%
+    pivot_longer(cols = contains("Sage"), names_to = "SAMPLE", values_to = "CPM") %>%  
+    mutate(SIGNIF = ifelse(NAME %in% signif_subsurface, "SUBSURFACE",
+                           ifelse(NAME %in% signif_surface, "SURFACE", "NS"))) %>% 
+    mutate(SIGNIF = factor(SIGNIF, levels = c("SUBSURFACE", "SURFACE", "NS"))) %>% 
+    group_by(SAMPLE, SIGNIF) %>% 
+    summarise(AggRelAb = sum(CPM), .groups = "drop") %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                              grepl("100", SAMPLE) ~ 100,
+                              grepl("80", SAMPLE) ~ 80,
+                              grepl("60", SAMPLE) ~ 60,
+                              grepl("40", SAMPLE) ~ 40,
+                              grepl("20", SAMPLE) ~ 20)) %>% 
+    group_by(SITE, DEPTH, SIGNIF) %>% 
+    summarise(MeanRelAb = mean(AggRelAb), .groups = "drop") %>% 
+    mutate(CONTRAST = "Effect of depth in Garry Oak")
+
+```
+
+```{r Supplementary Figure S5A - Relative abundance of depth-enriched viral populations}
+
+# visualise the relative abundance of depth-enriched viral populations
+  plot <- 
+    rbind(depth_means_grassland, depth_means_oak) %>% 
+      filter(!SIGNIF == "NS") %>% 
+      mutate(PROP = MeanRelAb/1e6) %>% 
+      mutate(CONTRAST = fct_recode(CONTRAST, 
+                                   `Effect of depth in\nHilly grassland` = "Effect of depth in Hilly grassland",
+                                   `Effect of depth in\nGarry Oak` = "Effect of depth in Garry Oak")) %>% 
+      ggplot(aes(x = DEPTH, y = PROP, fill = SIGNIF)) +
+        # geom_vline(aes(xintercept = DEPTH), colour = "gray80", linetype = "dashed") +
+        geom_area(colour = "white") +
+        facet_grid(cols = vars(SITE),
+                   rows = vars(CONTRAST)) +
+        scale_fill_manual(breaks = c("SURFACE", "SUBSURFACE"),
+                          labels = c("Surface-enriched", "Subsurface-enriched"),
+                          values = c(browns_palette[1], browns_palette[6])) +
+        scale_x_continuous(limits = c(20, 120),
+                           breaks = seq(20, 120, 20)) +
+        scale_y_continuous(limits = c(0, 1),
+                           breaks = seq(0, 1, 0.25)) +
+        theme(legend.position = "bottom",
+              text = element_text(size = 10)) +
+        labs(x = "Soil depth (cm)",
+             y = "Proportion of community abundance", 
+             fill = "",
+             title = "")
+
+  A <- plot_grid(plot, labels = "A", label_size = 15)
+  
+  rm(list = c("dds", "ddsFullCountTable"))
+
+```
+
+```{r Supplementary Figure S5B - Overlap in depth-enrichment of viral populations between sites}
+
+# create a presence-absence matrix for upset plot
+  df <- 
+    bind_rows(list("Hilly grassland" = res_grassland, "Garry Oak" = res_oak), .id = "SITE") %>%
+    mutate(ENRICHMENT = case_when(log2FoldChange < -1 & padj < 0.05 ~ "Surface-enriched",
+                                  log2FoldChange > 1 & padj < 0.05 ~ "Subsurface-enriched",
+                                  TRUE ~ "No enrichment")) %>% 
+    filter(!ENRICHMENT == "No enrichment") %>% 
+    select(SITE, NAME, ENRICHMENT) %>% 
+    mutate(PRESENCE = 1) %>% 
+    pivot_wider(names_from = "SITE", values_from = "PRESENCE", values_fill = 0)
+
+# visualise the overlap in depth-enrichment of viral populations between sites
+  plot <-
+    upset(data = df, 
+          intersect = c("Hilly grassland", "Garry Oak"),
+          name = "",
+          set_sizes = upset_set_size() +
+            labs(y = "Total vOTUs"),
+          base_annotations = list(
+            "vOTUs in\nintersection" = intersection_size(text = list(size = 3)) +
+              scale_y_continuous(limits = c(0, 4000))),
+          annotations = list(
+            "Enriched vOTUs" = list(
+              aes = aes(x = intersection, fill = fct_rev(ENRICHMENT)),
+              geom = list(
+                geom_bar(stat = "count", position = "fill", na.rm = T),
+                scale_fill_manual(breaks = c("Surface-enriched", "Subsurface-enriched"),
+                                  values = c(browns_palette[1], browns_palette[6])),
+                scale_y_continuous(labels = scales::percent_format()),
+                theme_bw(),
+                theme(axis.text.x = element_blank(),
+                      axis.ticks.x = element_blank(),
+                      axis.title.x = element_blank(),
+                      text = element_text(size = 10),
+                      legend.position = "none"),
+                labs(title = "")))),
+          matrix = intersection_matrix(geom = geom_point(size = 2)),
+          themes = upset_modify_themes(
+            list(
+              "vOTUs in\nintersection" = theme_bw() + 
+                theme(axis.title.x = element_blank(),
+                      axis.text.x = element_blank(),
+                      axis.ticks.x = element_blank(),
+                      text = element_text(size = 10)),
+              "intersections_matrix" = theme_bw() + 
+                theme(axis.title.y = element_blank(),
+                      axis.text.x = element_blank(),
+                      axis.ticks.x = element_blank(), 
+                      axis.line.x = element_blank(),
+                      text = element_text(size = 10)),
+              "overall_sizes" = theme_bw() +
+                theme(axis.title.y = element_blank(),
+                      axis.text.y = element_blank(),
+                      axis.ticks.y = element_blank(),
+                      axis.line.y = element_blank(),
+                      text = element_text(size = 10))
+              )
+            ),
+          stripes = c("grey95", "white"),
+          width_ratio = 0.5,
+          height_ratio = 0.3,
+          sort_intersections_by = c("degree", "cardinality"),
+          sort_intersections = c("descending"),
+          group_by = "degree",
+          sort_sets = "ascending")
+  
+  B <- plot_grid(plot, labels = "B", label_size = 15)
+
+  rm(list = c("res_grassland", "res_oak"))
+  
+```
+
+```{r Supplementary Figure S5 - Overlap in depth-enrichment of viral populations between sites}
+
+  plot <- plot_grid(A, B, ncol = 1, rel_heights = c(1, 0.8))
+  
+  ggsave(plot, width = 120, height = 200, units = "mm", dpi = 300,
+         file = here("Figures/Figure S5.eps"), device = cairo_ps)
+
+```
+
+# Figure 2 - Strain-level assembly of soil viral communities throughout soil depth
+
+```{r Figure 2A - Distance decay relationship in consensus ANI}
+
+# calculate vOTU CPM
+  CPM <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME")
+
+# extract vOTUs present in > 90% of samples
+  prevalent_vOTUs <- 
+    as_tibble(CPM, rownames = "NAME") %>% 
+    pivot_longer(-NAME, names_to = "SAMPLE", values_to = "CPM") %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    group_by(NAME) %>% 
+    summarise(OCCUPANCY = sum(CPM > 0)) %>% 
+    filter(OCCUPANCY >= 24 * 0.90) %>% 
+    pull(NAME)
+  
+# import inStrain output
+  comparisons <- 
+    as_tibble(read.delim(here("Data/instrainComparer_comparisonsTable.tsv")))
+
+# calculate average consensus ANI for each pairwise depth comparison
+  ANI_depth <- 
+    comparisons %>% 
+    filter(scaffold %in% prevalent_vOTUs & percent_genome_compared > 0.25) %>% # 74,752 (5,031 vOTUs)
+    mutate(across(c(name1, name2), list(DEPTH = ~case_when(grepl("113", .) | grepl("115", .) ~ 115,
+                                                           grepl("100", .) ~ 100,
+                                                           grepl("80", .) ~ 80,
+                                                           grepl("60", .) ~ 60,
+                                                           grepl("40", .) ~ 40,
+                                                           grepl("20", .) ~ 20),
+                                        SITE = ~case_when(grepl("Sage1", .) ~ "Hilly grassland",
+                                                          grepl("Sage2", .) ~ "Garry Oak")))) %>%
+    filter(name1_SITE == name2_SITE) %>% 
+    mutate(DEPTH_DIFFERENCE = abs(name1_DEPTH - name2_DEPTH)) %>% 
+    group_by(scaffold) %>% 
+    filter(n_distinct(DEPTH_DIFFERENCE) >= 3) %>% 
+    ungroup() %>% 
+    rename("NAME" = scaffold,
+           "SITE" = name1_SITE) %>% 
+    select(NAME, SITE, conANI, DEPTH_DIFFERENCE)
+
+# extract vOTUs with significant changes in consensus ANI across soil depth
+  ANI_correlations <- 
+    ANI_depth %>% 
+    nest(data = -NAME) %>% 
+    mutate(cor_test = map(data, ~cor.test(.x$conANI, .x$DEPTH_DIFFERENCE, method = "pearson", alternative = "two.sided")),
+           tidied = map(cor_test, tidy)) %>% 
+    unnest(tidied) %>% 
+    ungroup() %>% 
+    mutate(P_ADJ = p.adjust(p.value, method = "holm")) %>%
+    filter(P_ADJ < 0.05) %>% 
+    rename("ESTIMATE" = estimate) %>% 
+    select(NAME, ESTIMATE, P_ADJ)
+  
+# compute correlation coefficients for consensus ANI and difference in soil depth
+  stat_correlation <- 
+    inner_join(ANI_depth, ANI_correlations, by = "NAME") %>% 
+    nest(data = everything()) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$conANI, .x$DEPTH_DIFFERENCE, method = "pearson")),
+           lm_test = map(data, ~lm(.x$conANI ~ .x$DEPTH_DIFFERENCE)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3)))
+  
+# plot lines of consensus ANI over differences in soil depth
+  plot <- 
+    inner_join(ANI_depth, ANI_correlations, by = "NAME") %>%
+      ggplot(aes(x = DEPTH_DIFFERENCE, y = conANI * 100)) +
+        geom_line(aes(group = NAME), 
+                  stat = "smooth", method = "lm", formula = "y ~ x", se = F, 
+                  colour = "grey40", alpha = 0.3) +
+        geom_line(stat = "smooth", method = "lm", formula = "y ~ x", se = F,
+                  colour = "black", size = 1.5) +
+        geom_text(data = stat_correlation, aes(label = label),
+                  x = 10, y = 96.5, size = 3, hjust = 0, lineheight = 1) +
+        scale_x_continuous(limits = c(0, 100),
+                           breaks = seq(0, 100, 20)) +
+        scale_y_continuous(limits = c(95, 100.6),
+                           breaks = seq(95, 100, 1)) +
+        labs(x = "Depth difference (cm)",
+             y = "Consensus ANI (%)",
+             title = "") +
+        theme(legend.position = "none",
+              text = element_text(size = 10))
+  
+  A <- plot_grid(plot, labels = "A", label_size = 15)
+  
+  rm(list = c("ANI_correlations", "ANI_depth", "comparisons"))
+
+```
+
+```{r Bootstrap average nucleotide diversity (pi) estimation}
+
+# import local-scale (i.e., within each sample) micro diversity
+  local_contig_microdiversity <- 
+    as_tibble(read.delim(here("Data/local_contig_microdiversity.tsv")))
+
+# create a function to bootstrap pi estimation
+  iterate_micro_pi <- function(x){
+
+    set.seed(x)
+    
+    # record smallest sample size for sampling
+    sample_size <-
+      local_contig_microdiversity %>%
+      select(source, contig, pi) %>%
+      rename("SAMPLE" = source,
+             "NAME" = contig,
+             "PI" = pi) %>%
+      group_by(SAMPLE) %>%
+      summarise(NUM_vOTUs = n_distinct(NAME), .groups = "drop") %>%
+      summarise(MIN = min(NUM_vOTUs))
+    
+    # compute average pi value from sample
+    pi_values <- 
+      local_contig_microdiversity %>% 
+      select(source, contig, pi) %>% 
+      rename("SAMPLE" = source, 
+             "NAME" = contig,
+             "PI" = pi) %>% 
+      mutate(SAMPLE = str_replace(SAMPLE, "_sorted", "")) %>% 
+      group_by(SAMPLE) %>% 
+      slice_sample(n = sample_size$MIN) %>% 
+      group_by(SAMPLE) %>% 
+      summarise(MEDIAN = median(PI)) %>% 
+      arrange(SAMPLE) %>% 
+      deframe()
+    
+    # output average pi value for each sample
+    c(pi_values)
+  
+  }
+  set.seed(123)
+
+# bootstrap pi estimation, save results, and compute averages
+  micro_pi <- 
+    future_map_dfr(1:1000, iterate_micro_pi, .id = "SEED") %>% 
+    pivot_longer(cols = -SEED, names_to = "SAMPLE", values_to = "PI") %>% 
+    group_by(SAMPLE) %>% 
+    summarise(across(PI, list(MEDIAN = median, 
+                              MEAN = mean, 
+                              t = ~qt(0.95, n()-1),
+                              SE = ~sd(.x)/sqrt(n()))))
+
+```
+
+```{r Figure 2B - Viral macro diversity and micro diversity throughout the soil depth profiles}
+
+# calculate vOTU CPM
+  CPM <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    mutate(across(contains("Sage"), ~round(.))) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME")
+
+# generate phyloSeq vOTU matrix
+  phyloseq <- otu_table(CPM, taxa_are_rows = T)
+
+# create table of observed vOTU abundance and alpha diversity measures 
+  alpha_diversity <-
+    estimate_richness(phyloseq) %>%
+    as_tibble(., rownames = "SAMPLE") %>%
+    mutate(Pielou = Shannon / log(Observed)) %>%
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(DEPTH2 = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ "115 cm",
+                             grepl("100", SAMPLE) ~ "100 cm",
+                             grepl("80", SAMPLE) ~ "80 cm",
+                             grepl("60", SAMPLE) ~ "60 cm",
+                             grepl("40", SAMPLE) ~ "40 cm",
+                             grepl("20", SAMPLE) ~ "20 cm")) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+  
+# create data frame of sample-averaged micro diversity estimates
+  microdiversity <-
+    micro_pi %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                             grepl("100", SAMPLE) ~ 100,
+                             grepl("80", SAMPLE) ~ 80,
+                             grepl("60", SAMPLE) ~ 60,
+                             grepl("40", SAMPLE) ~ 40,
+                             grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+
+  # visualise viral macro diversity and micro diversity along the soil depth profile
+  plot <-
+    inner_join(alpha_diversity, microdiversity, by = c("SAMPLE", "DEPTH", "SITE")) %>% 
+      ggplot(aes(x = DEPTH)) +
+        geom_smooth(aes(y = PI_MEAN, colour = "PI_MEAN"), fill = "#67a9cf", 
+                    method = "loess", formula = "y ~ x", se = T, alpha = 0.2, size = 1) +
+        geom_smooth(aes(y = (Shannon - 6.5)/4000, colour = "Shannon"), fill = "#ef8a62", 
+                    method = "loess", formula = "y ~ x", se = T, alpha = 0.2, size = 1) +
+        facet_wrap(~ SITE, nrow = 1) +
+        scale_colour_manual(breaks = c("Shannon", "PI_MEAN"),
+                            values = c("#ef8a62", "#67a9cf"),
+                            labels = c("Macro diversity", "Micro diversity")) +
+        scale_y_continuous(labels = scales::comma,
+                           limits = c(0, 0.0005),
+                           breaks = seq(0, 0.0005, 0.0001),
+                           sec.axis = sec_axis(~(. * 4000) + 6.5, name = "Macro diversity (Shannon's H)")) +
+        scale_x_continuous(limits = c(20, 120),
+                           breaks = seq(20, 120, 20)) +
+        guides(colour = guide_legend(override.aes = list(fill = NA))) +
+        theme(legend.position = "right",
+              text = element_text(size = 10)) +
+        labs(x = "Soil depth (cm)",
+             y = "Micro diversity (average pi)",
+             colour = "",
+             title = "")
+  
+  B <- plot_grid(plot, labels = "B", label_size = 15)
+
+```
+
+```{r Figure 2C - Correlation of macro diversity with micro diversity}
+
+# calculate vOTU CPM
+  CPM <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    mutate(across(contains("Sage"), ~round(.))) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME")
+
+# generate phyloSeq vOTU matrix
+  phyloseq <- otu_table(CPM, taxa_are_rows = T)
+
+# create table of observed vOTU abundance and alpha diversity measures 
+  alpha_diversity <-
+    estimate_richness(phyloseq) %>%
+    as_tibble(., rownames = "SAMPLE") %>%
+    mutate(Pielou = Shannon / log(Observed)) %>%
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(DEPTH2 = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ "115 cm",
+                             grepl("100", SAMPLE) ~ "100 cm",
+                             grepl("80", SAMPLE) ~ "80 cm",
+                             grepl("60", SAMPLE) ~ "60 cm",
+                             grepl("40", SAMPLE) ~ "40 cm",
+                             grepl("20", SAMPLE) ~ "20 cm")) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+
+# create data frame of sample-averaged micro diversity estimates
+  microdiversity <-
+    micro_pi %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                             grepl("100", SAMPLE) ~ 100,
+                             grepl("80", SAMPLE) ~ 80,
+                             grepl("60", SAMPLE) ~ 60,
+                             grepl("40", SAMPLE) ~ 40,
+                             grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(DEPTH2 = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ "115 cm",
+                              grepl("100", SAMPLE) ~ "100 cm",
+                              grepl("80", SAMPLE) ~ "80 cm",
+                              grepl("60", SAMPLE) ~ "60 cm",
+                              grepl("40", SAMPLE) ~ "40 cm",
+                              grepl("20", SAMPLE) ~ "20 cm")) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+  
+# compute correlation coefficients for viral macro diversity and micro diversity
+  stat_correlation <- 
+    inner_join(alpha_diversity, microdiversity, by = c("SAMPLE", "DEPTH", "DEPTH2", "SITE")) %>%
+    nest(data = -SITE) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$Shannon, .x$PI_MEDIAN, method = "pearson")),
+           lm_test = map(data, ~lm(.x$PI_MEDIAN ~ .x$Shannon)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>% 
+    filter(!lm_tidied.term == "(Intercept)") %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3), 
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, label) %>% 
+    mutate(XPOS = c(NA),
+           YPOS = c(NA))
+  
+# visualise correlation plot of viral macro diversity and viral micro diversity
+  plot <-
+    inner_join(alpha_diversity, microdiversity, by = c("SAMPLE", "DEPTH", "DEPTH2", "SITE")) %>%
+      ggplot(aes(x = Shannon, y = PI_MEDIAN)) +
+        geom_point(aes(shape = SITE, fill = DEPTH2), 
+                   size = 4, alpha = 0.8, stroke = 0) +
+        # geom_smooth(colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.2) +
+        # geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+        #           hjust = 0, size = 3, lineheight = 1) +
+        facet_grid(cols = vars(SITE)) +
+        scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                           values = c(21, 24)) +
+        scale_fill_manual(breaks = c("20 cm", "40 cm", "60 cm", "80 cm", "100 cm", "115 cm"), 
+                          values = browns_palette) +
+        scale_y_continuous(labels = scales::comma,
+                           limits = c(0, 0.0005),
+                           breaks = seq(0, 0.0005, 0.0001)) +
+        scale_x_continuous(limits = c(7, 8.5),
+                           breaks = seq(7, 8.5, 0.25)) +
+        guides(fill = guide_legend(override.aes = list(shape = 21)),
+               shape = guide_legend(override.aes = list(fill = "white", stroke = 1, size = 3))) +
+        theme(legend.position = "right",
+              text = element_text(size = 10)) +
+        labs(x = "Macro diversity (Shannon's H)",
+             y = "Micro diversity (average pi)",
+             fill = "Soil depth:", 
+             shape = "Site:")
+  
+  C <- plot_grid(plot, labels = "C", label_size = 15)
+  
+```
+
+```{r Figure 2 - Strain-level assembly of soil viral communities throughout soil depth}
+
+  plot <- plot_grid(A, B, C, ncol = 1, rel_heights = c(1, 1, 1))
+
+  ggsave(plot, width = 170, height = 200, units = "mm", dpi = 300,
+         file = here("Figures/Figure 2.eps"), device = cairo_ps)
+
+```
+
+## Virus-host interactions were diverse with soil depth
+
+# Figure 3 - Virus-host interactions throughout soil depth
+
+```{r Figure 3A - Virus-host linkages}
+
+# create a data frame of viral abundance by host phylum
+  vOTUs <- 
+    DNA_vOTU_reads %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.)))) %>%
+    filter(!is.na(HOST_PHYLUM)) %>%
+    group_by(HOST_PHYLUM) %>% 
+    summarise(across(contains("Sage"), sum)) %>% 
+    pivot_longer(-HOST_PHYLUM, names_to = "SAMPLE", values_to = "PROP") %>% 
+    group_by(HOST_PHYLUM) %>% 
+    mutate(HOST_PHYLUM = case_when(sum(PROP) < 0.1 ~ "Other",
+                                   TRUE ~ HOST_PHYLUM)) %>% 
+    group_by(HOST_PHYLUM, SAMPLE) %>% 
+    summarise(vOTU = sum(PROP), .groups = "drop")
+
+# create a data frame of OTU abundance by phylum  
+  OTUs <- 
+    OTU_coverage %>% 
+    mutate(across(contains("Sage"), ~(./sum(.)))) %>%
+    group_by(PHYLUM) %>% 
+    summarise(across(contains("Sage"), sum)) %>% 
+    pivot_longer(-PHYLUM, names_to = "SAMPLE", values_to = "PROP") %>% 
+    mutate(PHYLUM = case_when(PHYLUM == "Actinomycetota" | PHYLUM == "Pseudomonadota" | PHYLUM == "Bacillota" | PHYLUM == "Acidobacteriota" | PHYLUM == "Mycoplasmatota" | PHYLUM == "Verrucomicrobiota" | PHYLUM == "Gemmatimonadota" | PHYLUM == "Undefined" ~ PHYLUM,
+                              TRUE ~ "Other")) %>%
+    group_by(PHYLUM, SAMPLE) %>%
+    summarise(OTU = sum(PROP), .groups = "drop")
+  
+# import green genes bacterial taxonomy database
+  green_genes <- 
+    as_tibble(read.delim(here("Data/green_genes.tsv"))) %>% 
+    mutate(Phylum = case_when(Phylum == "Actinobacteria" ~ "Actinomycetota",
+                              Phylum == "Acidobacteria" ~ "Acidobacteriota",
+                              Phylum == "Firmicutes" ~ "Bacillota",
+                              Phylum == "Bacteroidetes" ~ "Bacteroidota",
+                              Phylum == "Nitrospirae" ~ "Nitrospirota",
+                              Phylum == "Tenericutes" ~ "Mycoplasmatota",
+                              Phylum == "Verrucomicrobia" ~ "Verrucomicrobiota",
+                              Phylum == "Gemmatimonadetes" ~ "Gemmatimonadota",
+                              TRUE ~ Phylum)) %>% 
+    mutate(Class = case_when(Order == "Actinomycetales" ~ "Actinomycetia",
+                             TRUE ~ Class)) %>% 
+    mutate(Family = case_when(Genus == "Luteitalea" ~ "Vicinamibacteraceae",
+                              TRUE ~ Family)) %>%
+    mutate(Order = case_when(Genus == "Luteitalea" ~ "Vicinamibacterales",
+                              TRUE ~ Order)) %>%
+    mutate(Class = case_when(Genus == "Luteitalea" ~ "Vicinamibacteria",
+                              TRUE ~ Class))
+  
+# import index to connect bins to MAGs
+  MAG_bin_index <- 
+    as_tibble(read.csv(here("Data/MAG_bin_index.csv")))
+
+# create data frame of MAG taxonomy
+  MAG_taxonomy <-
+    as_tibble(readxl::read_excel(here("Data/MAG_metadata.xlsx"))) %>%
+    select("MAG" = `Genome name`, "TAXONOMY" = Taxonomy) %>% 
+    mutate(CLASS = case_when(TAXONOMY %in% green_genes$Class ~ TAXONOMY,
+                             TRUE ~ as.character(NA))) %>% 
+    mutate(PHYLUM = case_when(TAXONOMY %in% green_genes$Phylum ~ TAXONOMY,
+                              TAXONOMY == "Rokubacteria" ~ "Undefined",
+                              TAXONOMY == "Dormibacteraeota" ~ "Undefined",
+                              TAXONOMY == "Microgenomates" ~ "Undefined",
+                              TAXONOMY == "Parcubacteria" ~ "Undefined",
+                              TAXONOMY == "Thaumarchaeota" ~ TAXONOMY,
+                              TAXONOMY == "Bathyarchaeota" ~ TAXONOMY, 
+                              TAXONOMY == "Saccharibacteria" ~ TAXONOMY,
+                              grepl("proteobacteria", CLASS) ~ "Pseudomonadota",
+                              TRUE ~ as.character(NA))) %>% 
+    left_join(MAG_bin_index, by = "MAG")
+  
+# create a data frame of viral abundance by MAG phylum
+  MAGs <-
+    MAG_coverage %>% 
+    left_join(MAG_taxonomy, by = "BIN") %>% 
+    mutate(across(contains("Sage"), ~(./sum(.)))) %>%
+    group_by(PHYLUM) %>% 
+    summarise(across(contains("Sage"), sum)) %>% 
+    pivot_longer(-PHYLUM, names_to = "SAMPLE", values_to = "PROP") %>% 
+    mutate(PHYLUM = case_when(PHYLUM == "Actinomycetota" | PHYLUM == "Pseudomonadota" | PHYLUM == "Bacillota" | PHYLUM == "Acidobacteriota" | PHYLUM == "Mycoplasmatota" | PHYLUM == "Verrucomicrobiota" | PHYLUM == "Gemmatimonadota" | PHYLUM == "Undefined" ~ PHYLUM,
+                              TRUE ~ "Other")) %>%
+    group_by(PHYLUM, SAMPLE) %>%
+    summarise(MAG = sum(PROP), .groups = "drop") 
+  
+# create a data frame of abundance by phylum for vOTUs, OTUs, and MAGs
+  df <-
+    full_join(OTUs, vOTUs, by = c("SAMPLE", "PHYLUM" = "HOST_PHYLUM")) %>% 
+    full_join(MAGs, by = c("SAMPLE", "PHYLUM")) %>% 
+    mutate(PHYLUM = factor(PHYLUM, levels = c("Undefined", "Other", "Gemmatimonadota", "Verrucomicrobiota", "Mycoplasmatota", "Acidobacteriota", "Bacillota", "Pseudomonadota", "Actinomycetota"))) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    group_by(PHYLUM, DEPTH, SITE) %>% 
+    summarise(across(c(OTU, vOTU, MAG), ~mean(.)), .groups = "drop") %>% 
+    replace_na(replace = list(OTU = 0, vOTU = 0, MAG = 0)) %>% 
+    pivot_longer(c(OTU, vOTU, MAG), names_to = "GENOME", values_to = "PROPORTION") %>% 
+    mutate(GENOME = factor(GENOME, levels = c("vOTU", "OTU", "MAG"))) %>% 
+    mutate(GENOME = fct_recode(GENOME,
+                               "vOTUs\n(n = 3,324)" = "vOTU",
+                               "OTUs\n(n = 1,447)" = "OTU",
+                               "MAGs\n(n = 337)" = "MAG"))
+  
+# visualise virus-host linkages
+  plot <-
+    ggplot(df, aes(x = DEPTH, y = PROPORTION, fill = PHYLUM)) +
+      geom_area(colour = "white", position = "fill", outline.type = "upper", size = 0.3) +
+      facet_grid(cols = vars(SITE), 
+                 rows = vars(GENOME)) +
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      scale_y_continuous(limits = c(0, 1),
+                         breaks = seq(0, 1, 0.25)) +
+      scale_fill_manual(breaks = c("Actinomycetota", "Pseudomonadota", "Bacillota", "Acidobacteriota", "Mycoplasmatota", "Verrucomicrobiota", "Gemmatimonadota", "Other", "Undefined"),
+                        values = c(brewer.pal(7, "Dark2"), "grey80", alpha("white", 0)),
+                        drop = FALSE) +
+      theme(text = element_text(size = 10)) +
+      guides(fill = guide_legend(reverse = T,
+                                 override.aes = list(size = 0.5, colour = c("black", rep("white", 8))))) +
+      labs(x = "Soil depth (cm)",
+           y = "Mean proportional abundance",
+           fill = "Host phylum:")
+  
+  A <- plot_grid(plot, labels = "A", label_size = 15)
+
+```
+
+```{r Figure 3B - Incidence of lysogeny}
+
+# create a data frame of temperate vOTU incidence
+  df <- 
+    DNA_vOTU_reads %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>% 
+    select(NAME, LIFE_CYCLE, contains("Sage")) %>%
+    pivot_longer(cols = contains("Sage"), names_to = "SAMPLE", values_to = "CPM") %>% 
+    filter(CPM > 0) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    group_by(SAMPLE, DEPTH, SITE, LIFE_CYCLE) %>% 
+    summarise(NUM_vOTUs = n(), .groups = "drop") %>% 
+    group_by(SAMPLE, DEPTH, SITE) %>% 
+    mutate(PROP_vOTUs = NUM_vOTUs/sum(NUM_vOTUs)) %>%
+    filter(LIFE_CYCLE == "TEMPERATE")
+
+# compute correlation coefficients for temperate vOTU incidence across soil depth
+  stat_correlation <-
+    df %>%
+    nest(data = c(-SITE)) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$DEPTH, .x$PROP_vOTUs, method = "pearson")),
+           lm_test = map(data, ~lm(.x$PROP_vOTUs ~ .x$DEPTH)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    filter(cor_tidied.p.value < 0.05) %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, label) %>% 
+    mutate(XPOS = c(30),
+           YPOS = c(0.17))
+
+# visualise the incidence of lysogeny
+  plot <-
+    ggplot(df, aes(x = DEPTH, y = PROP_vOTUs)) +
+      geom_point(aes(shape = SITE),
+                 colour = "grey25", size = 2, alpha = 0.6, stroke = 0) +
+      geom_smooth(data = filter(df, SITE %in% stat_correlation$SITE),
+                  colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                hjust = 0, size = 3, lineheight = 1) +
+      facet_grid(cols = vars(SITE)) +
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      scale_y_continuous(limits = c(0, 0.5),
+                         breaks = seq(0, 0.5, 0.1)) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                           labels = c("Hilly grassland", "Garry Oak"),
+                           values = c(15, 17),
+                           guide = "none") +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)",
+           y = "Incidence of lysogeny\n(Proportion of vOTUs)",
+           title = "")
+
+  B <- plot_grid(plot, labels = "B", label_size = 15)
+  
+```
+
+```{r Figure 3C - Temperate viral abundance}
+
+# create a data frame of temperate vOTU abundance
+  df <- 
+    DNA_vOTU_reads %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.)))) %>% 
+    group_by(LIFE_CYCLE) %>% 
+    summarise(across(contains("Sage"), ~sum(.))) %>% 
+    pivot_longer(cols = contains("Sage"), names_to = "SAMPLE", values_to = "PROPORTION") %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    filter(LIFE_CYCLE == "TEMPERATE")
+
+# compute correlation coefficients for temperate vOTU abundance across soil depth
+  stat_correlation <-
+    df %>%
+    nest(data = c(-SITE)) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$DEPTH, .x$PROPORTION, method = "pearson")),
+           lm_test = map(data, ~lm(.x$PROPORTION ~ .x$DEPTH)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    filter(cor_tidied.p.value < 0.05) %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, label) %>% 
+    mutate(XPOS = c(30),
+           YPOS = c(0.17))
+  
+# visualise temperate viral abundance
+  plot <- 
+    ggplot(df, aes(x = DEPTH, y = PROPORTION)) +
+      geom_point(aes(shape = SITE),
+                 colour = "grey25", size = 2, alpha = 0.6, stroke = 0) +
+      geom_smooth(data = filter(df, SITE %in% stat_correlation$SITE),
+                  colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                hjust = 0, size = 3, lineheight = 1) +
+      facet_grid(cols = vars(SITE)) +
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      scale_y_continuous(limits = c(0, 0.5),
+                         breaks = seq(0, 0.5, 0.1)) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                           labels = c("Hilly grassland", "Garry Oak"),
+                           values = c(15, 17),
+                           guide = "none") +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)",
+           y = "Proportion of temperate\nviral abundance",
+           title = "")
+  
+  C <- plot_grid(plot, labels = "C", label_size = 15)
+
+```
+
+```{r Figure 3D - Incidence of AMG carriage}
+
+# create a data frame of incidence of vOTUs carrying AMGs
+  df <- 
+    DNA_vOTU_reads %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>% 
+    mutate(AMG = case_when(NAME %in% AMG_annotations$NAME ~ "YES",
+                           TRUE ~ "NO")) %>% 
+    select(NAME, AMG, contains("Sage")) %>%
+    pivot_longer(cols = contains("Sage"), names_to = "SAMPLE", values_to = "CPM") %>% 
+    filter(CPM > 0) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    group_by(SAMPLE, DEPTH, SITE, AMG) %>% 
+    summarise(NUM_vOTUs = n(), .groups = "drop") %>% 
+    group_by(SAMPLE, DEPTH, SITE) %>% 
+    mutate(PROP_vOTUs = NUM_vOTUs/sum(NUM_vOTUs)) %>%
+    filter(AMG == "YES")
+
+# compute correlation coefficients for incidence of vOTUs carrying AMGs across soil depth
+  stat_correlation <-
+    df %>%
+    nest(data = c(-SITE)) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$DEPTH, .x$PROP_vOTUs, method = "pearson")),
+           lm_test = map(data, ~lm(.x$PROP_vOTUs ~ .x$DEPTH)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    filter(cor_tidied.p.value < 0.05) %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, label) %>% 
+    mutate(XPOS = c(30),
+           YPOS = c(0.009))
+
+# visualise incidence of AMG carriage
+  plot <-
+    ggplot(df, aes(x = DEPTH, y = PROP_vOTUs)) +
+      geom_point(aes(shape = SITE),
+                 colour = "grey25", size = 2, alpha = 0.6, stroke = 0) +
+      geom_smooth(data = filter(df, SITE %in% stat_correlation$SITE),
+                  colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                hjust = 0, size = 3, lineheight = 1) +
+      facet_grid(cols = vars(SITE)) +
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      scale_y_continuous(limits = c(0, 0.04),
+                         breaks = seq(0, 0.04, 0.01)) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                           labels = c("Hilly grassland", "Garry Oak"),
+                           values = c(15, 17),
+                           guide = "none") +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)",
+           y = "Incidence of AMG carriage\n(Proportion of vOTUs)",
+           title = "")
+
+  D <- plot_grid(plot, labels = "D", label_size = 15)
+
+```
+
+```{r Figure 3E - AMG-carrying viral abundance}
+
+# create a data frame of abundance of vOTUs carrying AMGs
+  df <- 
+    DNA_vOTU_reads %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.)))) %>% 
+    filter(NAME %in% AMG_annotations$NAME) %>% 
+    summarise(across(contains("Sage"), ~sum(.))) %>% 
+    pivot_longer(cols = contains("Sage"), names_to = "SAMPLE", values_to = "PROPORTION") %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+
+# compute correlation coefficients for abundance of vOTUs carrying AMGs across soil depth
+  stat_correlation <-
+    df %>%
+    nest(data = c(-SITE)) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$DEPTH, .x$PROPORTION, method = "pearson")),
+           lm_test = map(data, ~lm(.x$PROPORTION ~ .x$DEPTH)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    filter(cor_tidied.p.value < 0.05) %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, label) %>% 
+    mutate(XPOS = c(NA),
+           YPOS = c(NA))
+  
+# visualise AMG-carrying viral abundance
+  plot <-
+    ggplot(df, aes(x = DEPTH, y = PROPORTION)) +
+      geom_point(aes(shape = SITE),
+                 colour = "grey25", size = 2, alpha = 0.6, stroke = 0) +
+      geom_smooth(data = filter(df, SITE %in% stat_correlation$SITE),
+                  colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                hjust = 0, size = 3, lineheight = 1) +
+      facet_grid(cols = vars(SITE)) +
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      scale_y_continuous(limits = c(0, 0.04),
+                         breaks = seq(0, 0.04, 0.01)) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                           labels = c("Hilly grassland", "Garry Oak"),
+                           values = c(15, 17),
+                           guide = "none") +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)",
+           y = "Proportion of AMG-carrying\nviral abundance",
+           title = "")
+  
+  E <- plot_grid(plot, labels = "E", label_size = 15)
+
+```
+
+```{r Figure 3 - Virus-host interactions throughout soil depth}
+
+  middle <- plot_grid(B, C, nrow = 1, rel_widths = c(1, 1))
+
+  bottom <- plot_grid(D, E, nrow = 1, rel_widths = c(1, 1))
+
+  plot <- plot_grid(A, middle, bottom, ncol = 1, rel_heights = c(1, 0.8, 0.8))
+
+  ggsave(plot, width = 170, height = 200, units = "mm", dpi = 300,
+         file = here("Figures/Figure 3.eps"), device = cairo_ps)
+
+```
+
+# Supplementary Figure S6 - Correlation of viral community and microbial community structure
+
+```{r run mantel test}
+
+# create matrix of OTU coverage values
+  coverage <- 
+    OTU_coverage %>% 
+    select(NAME, contains("Sage")) %>% 
+    column_to_rownames("NAME") %>% 
+    t()
+
+# compute Bray-Curtis dissimilarity on OTU coverage values
+  dist_OTU <- 
+    vegdist(coverage, method = "bray")
+  
+# calculate vOTU CPM
+  CPM <- 
+    DNA_vOTU_reads %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    mutate(across(contains("Sage"), ~sqrt(.))) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME") %>% 
+    t()
+
+# compute Bray-Curtis dissimilarity on vOTU CPM values
+  dist_vOTU <- 
+    vegdist(CPM, method = "bray")
+  
+# mantel test
+  mantel <- mantel(dist_OTU, dist_vOTU, permutations = 9999, method = "pearson")
+
+```
+
+```{r Supplementary Figure S6 - Correlation of viral community and microbial community structure}
+
+# combine dissimilarity matrices for OTUs and vOTUs
+  df <- 
+    as_tibble(inner_join(dist2list(dist_OTU), dist2list(dist_vOTU), by = c("col", "row"))) %>% 
+    rename("OTU" = value.x,
+           "vOTU" = value.y) %>% 
+    mutate(across(c(col, row), as.character)) %>%
+    filter(col < row) %>%
+    mutate(across(c(col, row), list(DEPTH = ~case_when(grepl("113", .) | grepl("115", .) ~ 115,
+                                                       grepl("100", .) ~ 100,
+                                                       grepl("80", .) ~ 80,
+                                                       grepl("60", .) ~ 60,
+                                                       grepl("40", .) ~ 40,
+                                                       grepl("20", .) ~ 20),
+                                    SITE = ~case_when(grepl("Sage1", .) ~ "Hilly grassland",
+                                                      grepl("Sage2", .) ~ "Garry Oak")))) %>%
+    filter(col_SITE == row_SITE) %>% 
+    mutate(DEPTH_DIFFERENCE = abs(col_DEPTH - row_DEPTH))
+  
+# compute correlation coefficients for vOTU and OTU abundances
+  stat_correlation <- 
+    df %>% 
+    nest(data = -col_SITE) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$OTU, .x$vOTU, method = "pearson")),
+           lm_test = map(data, ~lm(.x$vOTU ~ .x$OTU)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    mutate(XPOS = c(0.74, 0.68),
+           YPOS = c(0.18, 0.2))
+  
+# visualise correlations of vOTU and OTU community structures
+  plot <-
+    ggplot(df, aes(x = OTU, y = vOTU)) +
+      geom_point(aes(shape = col_SITE), 
+                 size = 2, alpha = 0.6, color = "gray25", stroke = 0) +
+      geom_smooth(colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation,
+                aes(x = XPOS, y = YPOS, label = label),
+                size = 3, hjust = 0, lineheight = 1) +
+      facet_grid(cols = vars(col_SITE)) +
+      coord_fixed() +
+      scale_x_continuous(limits = c(0, 1.0),
+                         breaks = seq(0, 1.0, 0.2)) +
+      scale_y_continuous(limits = c(0, 0.6),
+                         breaks = seq(0, 0.6, 0.1)) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                         values = c(15, 17),
+                         guide = "none") +
+      theme(text = element_text(size = 10)) +
+      labs(x = "OTU community dissimilarity",
+           y = "vOTU community dissimilarity")
+  
+  ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
+         file = here("Figures/Figure S6.eps"), device = cairo_ps)
+
+```
+
+# Supplementary Figure S7 - Correlation of viral community and microbial community diversity
+
+```{r Supplementary Figure S7 - Correlation of viral community and microbial community diversity}
+
+# estimate beta diversity of viral communities
+  viral_diversity <- 
+    DNA_vOTU_reads %>%
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.))*1e6)) %>%
+    mutate(across(contains("Sage"), ~round(.))) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME") %>%
+    otu_table(., taxa_are_rows = T) %>%
+    estimate_richness(., measures = c("Shannon")) %>%
+    as_tibble(., rownames = "SAMPLE")
+
+# estimate beta diversity of microbial communities
+  microbial_diversity <-
+    OTU_coverage %>%
+    mutate(across(contains("Sage"), ~round(.))) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME") %>%
+    otu_table(., taxa_are_rows = T) %>%
+    estimate_richness(., measures = c("Shannon")) %>%
+    as_tibble(., rownames = "SAMPLE")
+
+# create a data frame of community beta diversities
+  df <- 
+    inner_join(viral_diversity, microbial_diversity, by = "SAMPLE") %>% 
+    rename("SHANNON_VIRAL" = Shannon.x,
+           "SHANNON_MICROBIAL" = Shannon.y) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(DEPTH2 = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ "115 cm",
+                             grepl("100", SAMPLE) ~ "100 cm",
+                             grepl("80", SAMPLE) ~ "80 cm",
+                             grepl("60", SAMPLE) ~ "60 cm",
+                             grepl("40", SAMPLE) ~ "40 cm",
+                             grepl("20", SAMPLE) ~ "20 cm")) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+  
+# compute correlation coefficients for viral and bacterial community beta diversities
+  stat_correlation <- 
+    df %>%
+    nest(data = everything()) %>% 
+    mutate(cor_test = map(data, ~cor.test(.x$SHANNON_MICROBIAL, .x$SHANNON_VIRAL, method = "pearson")),
+           lm_test = map(data, ~lm(.x$SHANNON_VIRAL ~ .x$SHANNON_MICROBIAL)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>% 
+    filter(!lm_tidied.term == "(Intercept)") %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3), 
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(label) %>% 
+    mutate(XPOS = 5.9,
+           YPOS = 8.05)
+  
+# visualise correlation of viral community and microbial community divserity
+  plot <-
+    ggplot(df, aes(x = SHANNON_MICROBIAL, y = SHANNON_VIRAL)) +
+      geom_point(aes(shape = SITE, fill = DEPTH2), 
+                 size = 3, alpha = 0.8, stroke = 0) +
+      geom_smooth(colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.2) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                hjust = 0, size = 3, lineheight = 1) +
+      coord_fixed() +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                         values = c(21, 24)) +
+      scale_fill_manual(breaks = c("20 cm", "40 cm", "60 cm", "80 cm", "100 cm", "115 cm"), 
+                        values = browns_palette) +
+      scale_x_continuous(limits = c(5.8, 6.6),
+                         breaks = seq(5.8, 6.6, 0.2)) +
+      scale_y_continuous(limits = c(7.2, 8.3),
+                         breaks = seq(7.2, 8.3, 0.2)) +
+      guides(fill = guide_legend(override.aes = list(shape = 21)),
+             shape = guide_legend(override.aes = list(fill = "white", stroke = 1, size = 3))) +
+      theme(legend.position = "right",
+            text = element_text(size = 10)) +
+      labs(x = "Microbial community diversity (Shannon's H)",
+           y = "Viral community diversity (Shannon's H)",
+           fill = "Soil depth:", 
+           shape = "Site:")
+  
+  ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
+         file = here("Figures/Figure S7.eps"), device = cairo_ps)
+
+```
+
+# Supplementary Figure S8 - Correlation of viral abundances and host abundances
+
+```{r Supplementary Figure S8 - Correlation of viral abundances and host abundances}
+
+# create a data frame of viral abundance by host phylum
+  viral_abundance <- 
+    DNA_vOTU_reads %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.)))) %>%
+    group_by(HOST_PHYLUM) %>% 
+    summarise(across(contains("Sage"), ~sum(.))) %>% 
+    filter(!is.na(HOST_PHYLUM) & !HOST_PHYLUM == "Unassigned") %>% 
+    pivot_longer(contains("Sage"), names_to = "SAMPLE", values_to = "VIRAL_ABUNDANCE")
+
+# create a data frame of microbial abundance by phylum
+  bacterial_abundance <- 
+    OTU_coverage %>% 
+    mutate(across(contains("Sage"), ~(./sum(.)))) %>%
+    group_by(PHYLUM) %>% 
+    summarise(across(contains("Sage"), ~sum(.))) %>% 
+    filter(!PHYLUM == "Undefined") %>% 
+    pivot_longer(contains("Sage"), names_to = "SAMPLE", values_to = "BACTERIAL_ABUNDANCE")
+  
+# create a data frame of viral and microbial abundances by phylum
+  df <- 
+    inner_join(viral_abundance, bacterial_abundance, by = c("HOST_PHYLUM" = "PHYLUM", "SAMPLE")) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                             grepl("100", SAMPLE) ~ 100,
+                             grepl("80", SAMPLE) ~ 80,
+                             grepl("60", SAMPLE) ~ 60,
+                             grepl("40", SAMPLE) ~ 40,
+                             grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    mutate(GROUP = paste(SITE, HOST_PHYLUM, sep = ": ")) %>% 
+    mutate(GROUP = factor(GROUP, levels = c("Garry Oak: Actinomycetota", "Hilly grassland: Actinomycetota", "Garry Oak: Bacillota", "Hilly grassland: Bacillota", "Garry Oak: Pseudomonadota", "Hilly grassland: Pseudomonadota")))
+  
+# compute correlation coefficients for viral and bacterial abundance by phylum
+  stat_correlation <-
+    df %>%
+    nest(data = c(-GROUP)) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$BACTERIAL_ABUNDANCE, .x$VIRAL_ABUNDANCE, method = "pearson")),
+           lm_test = map(data, ~lm(.x$BACTERIAL_ABUNDANCE ~ .x$VIRAL_ABUNDANCE)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    filter(cor_tidied.p.value < 0.05) %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(GROUP, label) %>% 
+    mutate(XPOS = c(0.32, 0.165),
+           YPOS = c(0.07, 0.83))
+  
+# visualise correlations of viral abundances and host abundances
+  plot <-
+    ggplot(df, aes(x = VIRAL_ABUNDANCE, y = BACTERIAL_ABUNDANCE)) +
+      geom_point(aes(shape = SITE),
+                 colour = "grey25", size = 2, alpha = 0.6, stroke = 0) +
+      geom_smooth(data = filter(df, GROUP %in% stat_correlation$GROUP),
+                  colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                hjust = 0, size = 3, lineheight = 1) +
+      facet_wrap(~ GROUP, scales = "free", nrow = 3, ncol = 2) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                         labels = c("Hilly grassland", "Garry Oak"), 
+                         values = c(15, 17),
+                         guide = "none") + 
+      theme(text = element_text(size = 10)) +
+      labs(x = "Proportional viral abundance", 
+           y = "Proportional host abundance")
+  
+  ggsave(plot, width = 170, height = 170, units = "mm", dpi = 300,
+         file = here("Figures/Figure S8.eps"), device = cairo_ps)
+
+```
+
+# Supplementary Table S5 - Annotations of viral-encoded auxiliary metabolic genes
+
+```{r Supplementary Table S5 - Annotations of viral-encoded auxiliary metabolic genes}
+
+  AMG_annotations <- 
+    as_tibble(read.csv(file = here("Data/AMG_annotations.csv")))
+
+  write.csv(AMG_annotations, file = here("Tables/Table S5.csv"), row.names = F)
+
+```
+
+# Table 1 - Summary of viral-encoded CAZymes
+
+```{r Table 1 - Summary of viral-encoded CAZymes}
+
+  # made in excel, found at /Figures/Table 1.xlsx
+
+```
+
+# Supplementary Figure S9 - Relative abundance of viruses carrying carbohydrate-active enzymes
+
+```{r Supplementary Figure S9 - Relative abundance of viruses carrying carbohydrate-active enzymes}
+
+# create a data frame of relative abundance of CAZyme-carrying vOTUs
+  df <- 
+    DNA_vOTU_reads %>% 
+    select(NAME, LENGTH, contains("Sage")) %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.)))) %>% 
+    filter(NAME %in% filter(AMG_annotations, !cazy_hits == "")$NAME) %>% 
+    summarise(across(contains("Sage"), ~sum(.))) %>% 
+    pivot_longer(cols = contains("Sage"), names_to = "SAMPLE", values_to = "PROPORTION") %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    select(SAMPLE, DEPTH, SITE, PROPORTION)
+    
+# compute correlation coefficients for relative abundance of CAZyme-carrying vOTUs across soil depth
+  stat_correlation <-
+    df %>%
+    nest(data = c(-SITE)) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$PROPORTION, .x$DEPTH, method = "pearson")),
+           lm_test = map(data, ~lm(.x$PROPORTION ~ .x$DEPTH)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    filter(cor_tidied.p.value < 0.05) %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, label) %>% 
+    mutate(XPOS = NA,
+           YPOS = NA)
+
+# plot relative abundance of viruses carrying CAZyme AMGs
+  plot <- 
+    ggplot(df, aes(x = DEPTH, y = PROPORTION)) +
+      geom_point(aes(shape = SITE),
+                 colour = "grey25", size = 2, alpha = 0.6, stroke = 0) +
+      # geom_smooth(data = filter(df, SITE %in% stat_correlation$SITE),
+      #             colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      # geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+      #           hjust = 0, size = 3, lineheight = 1) +
+      facet_grid(cols = vars(SITE)) +
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      scale_y_continuous(limits = c(0, 0.007),
+                         breaks = seq(0, 0.007, 0.001)) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                           labels = c("Hilly grassland", "Garry Oak"),
+                           values = c(15, 17),
+                           guide = "none") +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)",
+           y = "Proportional viral abundance",
+           title = "")
+    
+  ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
+         file = here("Figures/Figure S9.eps"), device = cairo_ps)
+
+```
+
+## Virus-host antagonistic co-evolution was dynamic throughout the soil depth gradient
+
+# Figure 4 - Virus-host antagonistic co-evolution across soil depth profiles
+
+```{r Figure 4A - Anti-phage system detection}
+
+# import scaffold bin index
+  scaffold_bin_index <- 
+    as_tibble(read.csv(here("Data/scaffold_bin_index.csv"), header = T))
+
+# import defense-finder output and filter for complete system detection
+  whole_systems <- 
+    as_tibble(read.delim(here("Data/defense_finder_genes.tsv"))) %>% 
+    filter(sys_wholeness == 1)
+
+# link anti-phage system detection to MAG bins
+  anti_phage_systems <- 
+    as_tibble(read.delim(here("Data/defense_finder_systems.tsv"))) %>% 
+    mutate("SCAFFOLD" = word(sys_id, start = 1, end = 6, sep = "_")) %>% 
+    left_join(scaffold_bin_index, by = "SCAFFOLD") %>% 
+    filter(sys_id %in% whole_systems$sys_id) %>% 
+    select(BIN, "TYPE" = type, "SUBTYPE" = subtype)
+  
+# create a data frame of relative abundance of MAGs carrying anti-phage defense systems
+  df <-
+    MAG_coverage %>% 
+    pivot_longer(-BIN, names_to = "SAMPLE", values_to = "COVERAGE") %>% 
+    group_by(SAMPLE) %>% 
+    mutate(TOTAL_COVERAGE = sum(COVERAGE)) %>% 
+    group_by(BIN) %>% 
+    mutate(PROP_COVERAGE = COVERAGE/TOTAL_COVERAGE) %>% 
+    left_join(anti_phage_systems, by = "BIN") %>% 
+    mutate(TYPE = case_when(is.na(TYPE) ~ "None",
+                            TRUE ~ TYPE)) %>% 
+    group_by(SAMPLE, TYPE) %>% 
+    summarise(PROP_COVERAGE = sum(PROP_COVERAGE), .groups = "drop") %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                             grepl("100", SAMPLE) ~ 100,
+                             grepl("80", SAMPLE) ~ 80,
+                             grepl("60", SAMPLE) ~ 60,
+                             grepl("40", SAMPLE) ~ 40,
+                             grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    group_by(DEPTH, SITE, TYPE) %>% 
+    summarise(PROP_COVERAGE = mean(PROP_COVERAGE), .groups = "drop") %>% 
+    mutate(TYPE = case_when(TYPE == "None" | TYPE == "RM" | TYPE == "AbiEii" | TYPE == "SoFIC" | TYPE == "CBASS" | TYPE == "Wadjet" | TYPE == "Cas" | TYPE == "PsyrTA" ~ TYPE,
+                              TRUE ~ "Other")) %>%
+    group_by(DEPTH, SITE, TYPE) %>% 
+    summarise(PROP_COVERAGE = sum(PROP_COVERAGE), .groups = "drop")
+
+# plot anti-phage system detection
+  plot <-
+    df %>% 
+      ggplot(aes(x = DEPTH, y = PROP_COVERAGE, fill = factor(TYPE, levels = c("None", "Other", "PsyrTA", "Cas", "Wadjet", "CBASS", "SoFIC", "AbiEii", "RM")))) +
+        # geom_vline(aes(xintercept = DEPTH), colour = "gray80", linetype = "dashed") +
+        geom_area(colour = "white", position = "fill") +
+        facet_grid(cols = vars(SITE)) +
+        scale_x_continuous(limits = c(20, 120),
+                           breaks = seq(20, 120, 20)) +
+        scale_fill_manual(breaks = c("None", "Other", "PsyrTA", "Cas", "Wadjet", "CBASS", "SoFIC", "AbiEii", "RM"),
+                          values = c(alpha("white", 0), "grey80", brewer.pal(7, "Dark2"))) +
+        guides(fill = guide_legend(override.aes = list(colour = c("black", rep("white", 8))))) +
+        theme(text = element_text(size = 10)) +
+        labs(x = "Soil depth (cm)",
+             y = "Mean proportion of MAG abundance", 
+             fill = "Anti-phage system:",
+             title = "")
+  
+  A <- plot_grid(plot, labels = "A", label_size = 15)
+
+```
+
+```{r Figure 4B - Diversity of the anti-phage system repertoire}
+
+# calculate relative MAG abundance by anti-phage system
+  coverage <-
+    MAG_coverage %>% 
+    pivot_longer(-BIN, names_to = "SAMPLE", values_to = "COVERAGE") %>% 
+    group_by(SAMPLE) %>% 
+    mutate(TOTAL_COVERAGE = sum(COVERAGE)) %>% 
+    group_by(BIN) %>% 
+    mutate(REL_COVERAGE = (COVERAGE/TOTAL_COVERAGE)*1e6) %>% 
+    left_join(anti_phage_systems, by = "BIN") %>% 
+    mutate(TYPE = case_when(is.na(TYPE) ~ "None",
+                            TRUE ~ TYPE)) %>% 
+    group_by(SAMPLE, TYPE) %>% 
+    summarise(REL_COVERAGE = round(sum(REL_COVERAGE)), .groups = "drop") %>% 
+    pivot_wider(names_from = SAMPLE, values_from = REL_COVERAGE) %>% 
+    column_to_rownames("TYPE")
+
+# generate phyloSeq vOTU matrix
+  phyloseq <- otu_table(coverage, taxa_are_rows = T)
+
+# create a data frame of anti-phage system diversity 
+  df <-
+    estimate_richness(phyloseq, measures = c("Shannon")) %>%
+    as_tibble(., rownames = "SAMPLE") %>%
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(DEPTH2 = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ "115 cm",
+                             grepl("100", SAMPLE) ~ "100 cm",
+                             grepl("80", SAMPLE) ~ "80 cm",
+                             grepl("60", SAMPLE) ~ "60 cm",
+                             grepl("40", SAMPLE) ~ "40 cm",
+                             grepl("20", SAMPLE) ~ "20 cm")) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+  
+# compute correlation coefficients for anti-phage system diversity across soil depth
+  stat_correlation <-
+    df %>%
+    nest(data = -SITE) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$Shannon, .x$DEPTH, method = "pearson")),
+           lm_test = map(data, ~lm(.x$Shannon ~ .x$DEPTH)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    filter(cor_tidied.p.value < 0.05) %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, label) %>% 
+    mutate(XPOS = c(30, 30),
+           YPOS = c(2.32, 2.3))
+  
+# plot diversity of the anti-phage system repertoire
+  plot <- 
+    ggplot(df, aes(x = DEPTH, y = Shannon)) +
+      geom_point(aes(shape = SITE),
+                 size = 2, alpha = 0.6, stroke = 0) +
+      geom_smooth(colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                hjust = 0, size = 3, lineheight = 1) +
+      facet_grid(cols = vars(SITE)) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                         labels = c("Hilly grassland", "Garry Oak"), 
+                         values = c(15, 17),
+                         guide = "none") + 
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      scale_y_continuous(limits = c(1.8, 2.42),
+                         breaks = seq(1.8, 2.4, 0.2)) +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)", 
+           y = "Diversity of anti-phage systems\n(Shannon's H)",
+           title = "")
+  
+  B <- plot_grid(plot, labels = "B", label_size = 15)
+
+```
+
+```{r Figure 4C - Viruses under positive selection}
+
+# create a data frame of number of vOTUs under positive selection using micro diversity output from metapop
+  df <-
+    as_tibble(read.delim(here("Data/local_gene_microdiversity.tsv"))) %>%
+    filter(!is.na(pNpS_ratio) & !is.infinite(pNpS_ratio)) %>%
+    mutate(SAMPLE = str_replace(source, "_sorted", "")) %>%
+    select(SAMPLE, "NAME" = contig, "GENE" = contig_gene, pNpS_ratio) %>%
+    filter(pNpS_ratio > 1) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                             grepl("100", SAMPLE) ~ 100,
+                             grepl("80", SAMPLE) ~ 80,
+                             grepl("60", SAMPLE) ~ 60,
+                             grepl("40", SAMPLE) ~ 40,
+                             grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    group_by(SAMPLE, SITE, DEPTH) %>% 
+    summarise(NUM_vOTUs = n_distinct(NAME), .groups = "drop")
+  
+# compute correlation coefficients for number of vOTUs under positive selection across soil depth
+  stat_correlation <-
+    df %>%
+    nest(data = c(-SITE)) %>%
+    mutate(cor_test = map(data, ~cor.test(.x$DEPTH, .x$NUM_vOTUs, method = "pearson")),
+           lm_test = map(data, ~lm(.x$NUM_vOTUs ~ .x$DEPTH)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>%
+    filter(!lm_tidied.term == "(Intercept)") %>%
+    filter(cor_tidied.p.value < 0.05) %>%
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3),
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(SITE, label) %>% 
+    mutate(XPOS = c(30),
+           YPOS = c(55))
+
+# plot viruses under positive selection
+  plot <-
+    ggplot(df, aes(x = DEPTH, y = NUM_vOTUs)) +
+      geom_point(aes(shape = SITE),
+                 colour = "grey25", size = 2, alpha = 0.6, stroke = 0) +
+      geom_smooth(data = filter(df, SITE %in% stat_correlation$SITE),
+                  colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.4) +
+      geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+                hjust = 0, size = 3, lineheight = 1) +
+      facet_grid(cols = vars(SITE)) +
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      scale_y_continuous(limits = c(0, 75),
+                         breaks = seq(0, 75, 25)) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                           labels = c("Hilly grassland", "Garry Oak"),
+                           values = c(15, 17),
+                           guide = "none") +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)",
+           y = "Number of vOTUs with\n\u2265 1 gene under selection",
+           title = "")
+
+  C <- plot_grid(plot, labels = "C", label_size = 15)
+    
+```
+
+```{r Figure 4 - Virus-host antagonistic co-evolution}
+
+  plot <- plot_grid(A, B, C, ncol = 1, rel_heights = c(1, 0.8, 0.8))
+
+  ggsave(plot, width = 170, height = 200, units = "mm", dpi = 300,
+         file = here("Figures/Figure 4.eps"), device = cairo_ps)
+
+```
+
+# Supplementary Table S6 - Annotations of viral genes under positive selection
+
+```{r Supplementary Table S6 - Annotations of viral genes under positive selection}
+
+# create a data frame of viral gene annotations
+  curated_gene_annotations <- 
+    DNA_vOTU_gene_annotations %>% 
+    mutate(GENE = paste(NAME, gene_position, sep = "_")) %>% 
+    select(GENE, LOCUS, contains("hit"), contains("ANNOTATION"), amg_flags)
+
+# create a data frame of viral gene annotations for viral genes under positive selection
+  pos_selection <-
+    as_tibble(read.delim(here("Data/local_gene_microdiversity.tsv"))) %>%
+    filter(!is.na(pNpS_ratio) & !is.infinite(pNpS_ratio)) %>%
+    mutate(SAMPLE = str_replace(source, "_sorted", "")) %>%
+    select(SAMPLE, "NAME" = contig, "GENE" = contig_gene, pNpS_ratio) %>%
+    filter(pNpS_ratio > 1) %>%
+    left_join(curated_gene_annotations, by = "GENE") %>%
+    select(SAMPLE, NAME, LOCUS, pNpS_ratio, kegg_hit:amg_flags)
+
+  write.csv(pos_selection, file = here("Tables/Table S6.csv"), row.names = F)
+
+```
+
+# Supplementary Figure S10 - Genome maps of high-quality viral genomes carrying ABC transporters under positive selection
+
+```{r Supplementary Figure S10 - Genome maps of high-quality viral genomes carrying ABC transporters under positive selection}
+
+# import viral genes with hits to lysogenic PFAM modules
+  lysogeny_genes <- 
+    as_tibble(read.delim(here("Data/lysogeny_gene_hits.tsv")))
+
+# create a data frame of functional gene annotations for high-quality viral genomes carrying ABC transporters under positive selection
+  df <-
+    DNA_vOTU_gene_annotations %>% 
+    filter(NAME == "DNA_vOTU_5734" | NAME == "DNA_vOTU_6575" | NAME == "DNA_vOTU_2761" | NAME == "DNA_vOTU_5919" | NAME == "DNA_vOTU_707") %>% 
+    mutate(across(contains("position"), ~.x/1000)) %>% 
+    mutate(FUNCTION = case_when(LOCUS %in% AMG_annotations$LOCUS ~ "AMG", # putative AMGs
+                                # grepl("V", amg_flags) ~ "Structural/Replication",
+                                # grepl("P", amg_flags) ~ "Peptidase",
+                                # grepl("lysin", vogdb_hits) ~ "Lysis",
+                                LOCUS == "SAGEDEP_086795" ~ "ABC transporter", # "ccmA",
+                                LOCUS == "SAGEDEP_102900" ~ "ABC transporter", # "glycerol-3-phosphate transport system",
+                                LOCUS == "SAGEDEP_048611" ~ "ABC transporter", # "MacAB",
+                                LOCUS == "SAGEDEP_091261" ~ "ABC transporter", # "ABC-type nitrate/sulfonate/bicarbonate transport system",
+                                LOCUS == "SAGEDEP_012472" ~ "ABC transporter", # "ABC-type Fe3+/spermidine/putrescine transport system",
+                                LOCUS %in% lysogeny_genes$LOCUS ~ "Lysogeny", # lysogeny genes
+                                grepl("phrog", PHROG) ~ "PHROG", # hits to PHROG database
+                                TRUE ~ "CDS")) %>% 
+    # group_by(FUNCTION) %>% count()
+    select(NAME, LOCUS, FUNCTION, start_position, end_position, strandedness)
+  
+# plot genome map for DNA_vOTU_5734
+  plot <-
+    ggplot(filter(df, NAME == "DNA_vOTU_5734"), aes(xmin = start_position, xmax = end_position, y = NAME, forward = strandedness, fill = FUNCTION)) +
+      geom_gene_arrow() +
+      scale_fill_manual(values = c("yellow", "#D95F02", "#7570B3", "#66A61E", "grey"), 
+                        breaks = c("ABC transporter", "AMG", "Lysogeny", "PHROG", "CDS")) +
+                        # values = c("yellow", "#D95F02", "orange", "#7570B3", "#E7298A", "#66A61E", "grey"), 
+                        # breaks = c("ABC transporter", "AMG", "Lysis", "Lysogeny", "Peptidase", "Structural/Replication", "CDS")) +
+      theme_genes() +
+      theme(legend.position = "none",
+            text = element_text(size = 10)) +
+      guides(fill = guide_legend(nrow = 1)) +
+      scale_x_continuous(labels = scales::comma, limits = c(0, 400)) + 
+      labs(y = "",
+           x = "Nucleotide position (kb)",
+           fill = "")
+  
+  A <- ggwrap(plot, 4)
+  
+# plot genome map for DNA_vOTU_6575
+  plot <-
+    ggplot(filter(df, NAME == "DNA_vOTU_6575"), aes(xmin = start_position, xmax = end_position, y = NAME, forward = strandedness, fill = FUNCTION)) +
+      geom_gene_arrow() +
+      scale_fill_manual(values = c("yellow", "#D95F02", "#7570B3", "#66A61E", "grey"), 
+                        breaks = c("ABC transporter", "AMG", "Lysogeny", "PHROG", "CDS")) +
+      theme_genes() +
+      theme(legend.position = "none",
+            text = element_text(size = 10)) +
+      scale_x_continuous(labels = scales::comma, limits = c(0, 100)) + 
+      labs(y = "",
+           x = "Nucleotide position (kb)",
+           fill = "")
+  
+  B <- plot
+  
+# plot genome map for DNA_vOTU_2761
+  plot <-
+    ggplot(filter(df, NAME == "DNA_vOTU_2761"), aes(xmin = start_position, xmax = end_position, y = NAME, forward = strandedness, fill = FUNCTION)) +
+      geom_gene_arrow() +
+      scale_fill_manual(values = c("yellow", "#D95F02", "#7570B3", "#66A61E", "grey"), 
+                        breaks = c("ABC transporter", "AMG", "Lysogeny", "PHROG", "CDS")) +
+      theme_genes() +
+      theme(legend.position = "none",
+            text = element_text(size = 10)) +
+      scale_x_continuous(labels = scales::comma, limits = c(0, 200)) + 
+      labs(y = "",
+           x = "Nucleotide position (kb)",
+           fill = "") 
+
+  C <- ggwrap(plot, 2)
+    
+# plot genome map for DNA_vOTU_5919
+  plot <-
+    ggplot(filter(df, NAME == "DNA_vOTU_5919"), aes(xmin = start_position, xmax = end_position, y = NAME, forward = strandedness, fill = FUNCTION)) +
+      geom_gene_arrow() +
+      scale_fill_manual(values = c("yellow", "#D95F02", "#7570B3", "#66A61E", "grey"), 
+                        breaks = c("ABC transporter", "AMG", "Lysogeny", "PHROG", "CDS")) +
+      theme_genes() +
+      theme(legend.position = "bottom",
+            text = element_text(size = 10)) +
+      scale_x_continuous(labels = scales::comma, limits = c(0, 400)) + 
+      labs(y = "",
+           x = "Nucleotide position (kb)",
+           fill = "") 
+  
+  legend <- get_legend(plot)
+  plot <- plot + theme(legend.position = "none")
+  
+  D <- ggwrap(plot, 4)
+  
+# plot genome map for DNA_vOTU_707
+  plot <-
+    ggplot(filter(df, NAME == "DNA_vOTU_707"), aes(xmin = start_position, xmax = end_position, y = NAME, forward = strandedness, fill = FUNCTION)) +
+      geom_gene_arrow() +
+      scale_fill_manual(values = c("yellow", "#D95F02", "#7570B3", "#66A61E", "grey"), 
+                        breaks = c("ABC transporter", "AMG", "Lysogeny", "PHROG", "CDS")) +
+      theme_genes() +
+      theme(legend.position = "none",
+            text = element_text(size = 10)) +
+      scale_x_continuous(labels = scales::comma, limits = c(0, 200)) + 
+      labs(y = "",
+           x = "Nucleotide position (kb)",
+           fill = "") 
+  
+  E <- ggwrap(plot, 2)
+  
+  plot <- plot_grid(A, B, C, D, E, legend, ncol = 1, rel_heights = c(3, 1.3, 2, 3, 2, 0.5))
+  
+  ggsave(plot, width = 170, height = 225, units = "mm", dpi = 300,
+     file = here("Figures/Figure S10.eps"), device = cairo_ps)
+    
+```
+
+## Discussion
+
+# Supplementary Figure S11 - Rank abundance of jumbo phages
+
+```{r Supplementary Figure S11 - Rank abundance of jumbo phages}
+
+# create a data frame of rank abundance of jumbo phages
+  df <- 
+    DNA_vOTU_reads %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    select(NAME, LENGTH, PHAGE, contains("Sage")) %>%
+    pivot_longer(contains("Sage"), names_to = "SAMPLE", values_to = "RPKB") %>% 
+    group_by(SAMPLE) %>% 
+    mutate(RANK = rank(-RPKB)) %>% 
+    mutate(QUARTILE = (RANK/10196)*100) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+  
+# plot the rank abundance of jumbo phages
+  plot <- 
+    ggplot(filter(df, LENGTH > 200000), aes(x = DEPTH, y = QUARTILE)) +
+      geom_boxplot(aes(group = DEPTH)) +
+      facet_grid(cols = vars(SITE)) +
+      scale_y_continuous(limits = c(0, 100),
+                         breaks = seq(0, 100, 10)) +
+      scale_x_continuous(limits = c(10, 125),
+                           breaks = seq(20, 120, 20)) +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)",
+           y = "Rank abundance (%)")
+  
+  ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
+         file = here("Figures/Figure S11.eps"), device = cairo_ps)
+
+```
+
+# Supplementary Figure S12 - Rank abundance of CAZyme-carrying vOTUs
+
+```{r Supplementary Figure S12 - Rank abundance of CAZyme-carrying vOTUs}
+
+# create a data frame of the rank abundance of CAZyme-carrying vOTUs
+  df <- 
+    DNA_vOTU_reads %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    select(NAME, LENGTH, PHAGE, contains("Sage")) %>%
+    pivot_longer(contains("Sage"), names_to = "SAMPLE", values_to = "RPKB") %>% 
+    group_by(SAMPLE) %>% 
+    mutate(RANK = rank(-RPKB)) %>% 
+    mutate(QUARTILE = (RANK/10196)*100) %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                               grepl("100", SAMPLE) ~ 100,
+                               grepl("80", SAMPLE) ~ 80,
+                               grepl("60", SAMPLE) ~ 60,
+                               grepl("40", SAMPLE) ~ 40,
+                               grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak"))
+  
+# plot the rank abundance of CAZyme-carrying vOTUs
+  plot <-
+    ggplot(filter(df, NAME %in% filter(AMG_annotations, !cazy_hits == "")$NAME), aes(x = DEPTH, y = QUARTILE)) +
+      geom_boxplot(aes(group = DEPTH)) +
+      facet_grid(cols = vars(SITE)) +
+      scale_y_continuous(limits = c(0, 100),
+                         breaks = seq(0, 100, 10)) +
+      scale_x_continuous(limits = c(10, 125),
+                           breaks = seq(20, 120, 20)) +
+      theme(text = element_text(size = 10)) +
+      labs(x = "Soil depth (cm)",
+           y = "Rank abundance (%)")
+
+  ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
+     file = here("Figures/Figure S12.eps"), device = cairo_ps)
+    
+```
+
+# Supplementary Figure S13 - Relative abundance of hosts of viruses carrying auxiliary metabolic genes
+
+```{r Supplementary Figure S13 - Relative abundance of hosts of viruses carrying auxiliary metabolic genes}
+
+# create a data frame of relative abundance of hosts of viruses carrying AMGs
+  df <- 
+    DNA_vOTU_reads %>% 
+    filter(NAME %in% AMG_annotations$NAME) %>% 
+    mutate(across(contains("Sage"), ~./(LENGTH/1000))) %>%
+    mutate(across(contains("Sage"), ~(./sum(.)))) %>%
+    mutate(HOST_PHYLUM = case_when(is.na(HOST_PHYLUM) ~ "Unknown",
+                                   TRUE ~ HOST_PHYLUM)) %>%
+    group_by(HOST_PHYLUM) %>% 
+    summarise(across(contains("Sage"), sum)) %>% 
+    pivot_longer(-HOST_PHYLUM, names_to = "SAMPLE", values_to = "PROP") %>% 
+    group_by(HOST_PHYLUM) %>% 
+    mutate(HOST_PHYLUM = case_when(sum(PROP) < 0.1 ~ "Other",
+                                   TRUE ~ HOST_PHYLUM)) %>% 
+    group_by(HOST_PHYLUM, SAMPLE) %>% 
+    summarise(PROP = sum(PROP), .groups = "drop") %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ 115,
+                             grepl("100", SAMPLE) ~ 100,
+                             grepl("80", SAMPLE) ~ 80,
+                             grepl("60", SAMPLE) ~ 60,
+                             grepl("40", SAMPLE) ~ 40,
+                             grepl("20", SAMPLE) ~ 20)) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
+    group_by(HOST_PHYLUM, DEPTH, SITE) %>% 
+    summarise(PROP = mean(PROP), .groups = "drop") %>% 
+    mutate(HOST_PHYLUM = factor(HOST_PHYLUM, levels = c("Unknown", "Other", "Acidobacteriota", "Bacteroidota", "Bacillota", "Pseudomonadota", "Actinomycetota")))
+
+# plot the relative abundance of hosts of viruses carrying AMGs 
+  plot <-
+    ggplot(df, aes(x = DEPTH, y = PROP, fill = HOST_PHYLUM)) +
+      geom_area(colour = "white", position = "fill", outline.type = "upper", size = 0.3) +
+      facet_grid(cols = vars(SITE)) +
+      scale_x_continuous(limits = c(20, 120),
+                         breaks = seq(20, 120, 20)) +
+      scale_y_continuous(limits = c(0, 1),
+                         breaks = seq(0, 1, 0.25)) +
+      scale_fill_manual(breaks = c("Actinomycetota", "Pseudomonadota", "Bacillota", "Bacteroidota", "Acidobacteriota", "Other", "Unknown"),
+                        values = c(brewer.pal(5, "Dark2"), "grey80", alpha("white", 0))) +
+      theme(text = element_text(size = 10)) +
+      guides(fill = guide_legend(reverse = T,
+                                 override.aes = list(size = 0.5, colour = c("black", rep("white", 6))))) +
+      labs(x = "Soil depth (cm)",
+           y = "Mean proportional abundance",
+           fill = "")
+  
+  ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
+         file = here("Figures/Figure S13.eps"), device = cairo_ps)
+
+```
+
+# Supplementary Figure S14 - Correlation of microbial macro diversity and viral micro diversity
+
+```{r Supplementary Figure S14- Correlation of microbial macro diversity and viral micro diversity}
+  
+# create a data frame of microbial macro diversity
+  microbial_diversity <-
+    OTU_coverage %>%
+    mutate(across(contains("Sage"), ~round(.))) %>%
+    select(NAME, contains("Sage")) %>%
+    column_to_rownames("NAME") %>%
+    otu_table(., taxa_are_rows = T) %>%
+    estimate_richness(., measures = c("Shannon")) %>%
+    as_tibble(., rownames = "SAMPLE")
+
+# join viral diversity to microbial macro diversity
+  df <- 
+    inner_join(micro_pi, microbial_diversity, by = "SAMPLE") %>% 
+    mutate(DEPTH = case_when(grepl("113", SAMPLE) | grepl("115", SAMPLE) ~ "115 cm",
+                             grepl("100", SAMPLE) ~ "100 cm",
+                             grepl("80", SAMPLE) ~ "80 cm",
+                             grepl("60", SAMPLE) ~ "60 cm",
+                             grepl("40", SAMPLE) ~ "40 cm",
+                             grepl("20", SAMPLE) ~ "20 cm")) %>% 
+    mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
+                            grepl("Sage2", SAMPLE) ~ "Garry Oak")) 
+
+# compute correlation coefficients of viral diversity and microbial macro diversity
+  stat_correlation <- 
+    df %>%
+    nest(data = everything()) %>% 
+    mutate(cor_test = map(data, ~cor.test(.x$PI_MEAN, .x$Shannon, method = "pearson")),
+           lm_test = map(data, ~lm(.x$PI_MEAN ~ .x$Shannon)),
+           cor_tidied = map(cor_test, tidy),
+           lm_tidied = map(lm_test, tidy)) %>%
+    unnest(c(cor_tidied, lm_tidied), names_sep = ".") %>% 
+    filter(!lm_tidied.term == "(Intercept)") %>% 
+    mutate(label = paste("r = ", signif(cor_tidied.estimate,3), 
+                         "\nslope = ", signif(lm_tidied.estimate, 3),
+                         "\np = ", signif(cor_tidied.p.value, 3))) %>% 
+    select(label) %>% 
+    mutate(XPOS = NA,
+           YPOS = NA)
+  
+# plot the correlation of microbial macrco diversity and viral micro diversity
+  plot <-
+    ggplot(df, aes(x = Shannon, y = PI_MEAN)) +
+      geom_point(aes(shape = SITE, fill = DEPTH), 
+                 size = 3, alpha = 0.8, stroke = 0) +
+      # geom_smooth(colour = "black", method = "lm", formula = "y ~ x", se = T, alpha = 0.2) +
+      # geom_text(data = stat_correlation, aes(x = XPOS, y = YPOS, label = label),
+      #           hjust = 0, size = 3, lineheight = 1) +
+      scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
+                         values = c(21, 24)) +
+      scale_fill_manual(breaks = c("20 cm", "40 cm", "60 cm", "80 cm", "100 cm", "115 cm"), 
+                        values = browns_palette) +
+      scale_y_continuous(limits = c(0, 0.0005),
+                         breaks = seq(0, 0.0005, 0.0001),
+                         labels = scales::comma) +
+      scale_x_continuous(limits = c(5.8, 6.6),
+                         breaks = seq(5.8, 6.6, 0.2)) +
+      guides(fill = guide_legend(override.aes = list(shape = 21)),
+             shape = guide_legend(override.aes = list(fill = "white", stroke = 1, size = 3))) +
+      theme(legend.position = "right",
+            text = element_text(size = 10)) +
+      labs(x = "Microbial macro diversity (Shannon's H)",
+           y = "Viral micro diversity (pi)",
+           fill = "Soil depth:", 
+           shape = "Site:")
+  
+  ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
+         file = here("Figures/Figure S14.eps"), device = cairo_ps)
+
+```
