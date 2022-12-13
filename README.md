@@ -1,6 +1,6 @@
 # README
 
-This repository contains the data and code used in Muscatt et al. (on [bioRxiv](https://www.biorxiv.org)). 
+This repository contains the data and code used in Muscatt et al. 2022 (on [bioRxiv](https://doi.org/10.1101/2022.12.09.519740)). 
 -   The metagenomic data set, generated previously by Sharrar et al. (DOI: 10.1128/mBio.00416-20), can be accessed from NCBI under project accession PRJNA577476 (sample accessions SAMN13153360-SAMN13153383). 
 -   dsDNA vOTU genome sequences can be accessed from NCBI under project accession PRJEB57765 (sample accession SAMEA112154074). 
 -   vOTU prediction stats, FASTA nucleotide files (containing vOTU genomes, MAG bins, and rpS3 sequences), FASTA amino acid files (containing vOTU genes and DNA polymerase genes), Newick tree file containing jumbo phage phylogeny, and vConTACT2 network input and output files are available from [figshare](https://figshare.com).
