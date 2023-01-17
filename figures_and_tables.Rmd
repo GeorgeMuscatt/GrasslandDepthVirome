@@ -475,7 +475,7 @@ editor_options:
   plot <- plot_grid(A, B, C, D, ncol = 1, rel_heights = c(1, 1, 1, 1))
 
   ggsave(plot, width = 170, height = 340, units = "mm", dpi = 300,
-         file = here("Figures/Figure S1.eps"), device = cairo_ps)
+         file = here("Figures/Figure S1.pdf"), device = "pdf")
   
 ```
 
@@ -649,7 +649,7 @@ editor_options:
   
 # save as pdf 6 x 6 inches
   ggsave(plot3, width = 170, height = 225, units = "mm", dpi = 300,
-         file = here("Figures/Figure S2.eps"), device = cairo_ps)
+         file = here("Figures/Figure S2.pdf"), device = "pdf")
     
 ```
 
@@ -839,10 +839,10 @@ editor_options:
 ```{r Supplementary Figure S3 - Phylogenetic groups A, B, and F from assessment of jumbo phage vOTUs and jumbo-related vOTUs using DNA polymerase gene}
 
   ggsave(plot_AB, width = 170, height = 225, units = "mm", dpi = 300,
-         file = here("Figures/Figure S3A.eps"), device = cairo_ps)
+         file = here("Figures/Figure S3A.pdf"), device = "pdf")
 
   ggsave(plot_F, width = 170, height = 225, units = "mm", dpi = 300,
-         file = here("Figures/Figure S3B.eps"), device = cairo_ps)
+         file = here("Figures/Figure S3B.pdf"), device = "pdf")
 
 ```
 
@@ -1112,7 +1112,7 @@ editor_options:
   plot <- plot_grid(A, B, C, ncol = 1, rel_heights = c(1.1, 1, 0.9))
 
   ggsave(plot, width = 170, height = 225, units = "mm", dpi = 300,
-         file = here("Figures/Figure 1.eps"), device = cairo_ps)
+         file = here("Figures/Figure 1.pdf"), device = "pdf")
 
 ```
 
@@ -1149,7 +1149,7 @@ editor_options:
            y = "Percentage of vOTUs")
   
   ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
-         file = here("Figures/Figure S4.eps"), device = cairo_ps)
+         file = here("Figures/Figure S4.pdf"), device = "pdf")
 
 ```
 
@@ -1419,7 +1419,7 @@ editor_options:
   plot <- plot_grid(A, B, ncol = 1, rel_heights = c(1, 0.8))
   
   ggsave(plot, width = 120, height = 200, units = "mm", dpi = 300,
-         file = here("Figures/Figure S5.eps"), device = cairo_ps)
+         file = here("Figures/Figure S5.pdf"), device = "pdf")
 
 ```
 
@@ -1740,7 +1740,8 @@ editor_options:
         #           hjust = 0, size = 3, lineheight = 1) +
         facet_grid(cols = vars(SITE)) +
         scale_shape_manual(breaks = c("Hilly grassland", "Garry Oak"),
-                           values = c(21, 24)) +
+                           labels = c("Hilly grassland", "Garry Oak"),
+                           values = c(22, 24)) +
         scale_fill_manual(breaks = c("20 cm", "40 cm", "60 cm", "80 cm", "100 cm", "115 cm"), 
                           values = browns_palette) +
         scale_y_continuous(labels = scales::comma,
@@ -1748,14 +1749,15 @@ editor_options:
                            breaks = seq(0, 0.0005, 0.0001)) +
         scale_x_continuous(limits = c(7, 8.5),
                            breaks = seq(7, 8.5, 0.25)) +
-        guides(fill = guide_legend(override.aes = list(shape = 21)),
-               shape = guide_legend(override.aes = list(fill = "white", stroke = 1, size = 3))) +
+        guides(fill = guide_legend(order = 2, override.aes = list(shape = 21)),
+               shape = guide_legend(order = 1, override.aes = list(fill = "white", stroke = 1, size = 3))) +
         theme(legend.position = "right",
               text = element_text(size = 10)) +
         labs(x = "Macro diversity (Shannon's H)",
-             y = "Micro diversity (average pi)",
+             y = "Micro diversity (average π)",
              fill = "Soil depth:", 
-             shape = "Site:")
+             shape = "Site:"
+             title = "")
   
   C <- plot_grid(plot, labels = "C", label_size = 15)
   
@@ -1766,7 +1768,7 @@ editor_options:
   plot <- plot_grid(A, B, C, ncol = 1, rel_heights = c(1, 1, 1))
 
   ggsave(plot, width = 170, height = 200, units = "mm", dpi = 300,
-         file = here("Figures/Figure 2.eps"), device = cairo_ps)
+         file = here("Figures/Figure 2.pdf"), device = "pdf")
 
 ```
 
@@ -1900,7 +1902,8 @@ editor_options:
                                  override.aes = list(size = 0.5, colour = c("black", rep("white", 8))))) +
       labs(x = "Soil depth (cm)",
            y = "Mean proportional abundance",
-           fill = "Host phylum:")
+           fill = "Host phylum:",
+           title = "")
   
   A <- plot_grid(plot, labels = "A", label_size = 15)
 
@@ -2183,7 +2186,7 @@ editor_options:
   plot <- plot_grid(A, middle, bottom, ncol = 1, rel_heights = c(1, 0.8, 0.8))
 
   ggsave(plot, width = 170, height = 200, units = "mm", dpi = 300,
-         file = here("Figures/Figure 3.eps"), device = cairo_ps)
+         file = here("Figures/Figure 3.pdf"), device = "pdf")
 
 ```
 
@@ -2280,7 +2283,7 @@ editor_options:
            y = "vOTU community dissimilarity")
   
   ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
-         file = here("Figures/Figure S6.eps"), device = cairo_ps)
+         file = here("Figures/Figure S6.pdf"), device = "pdf")
 
 ```
 
@@ -2374,7 +2377,7 @@ editor_options:
            shape = "Site:")
   
   ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
-         file = here("Figures/Figure S7.eps"), device = cairo_ps)
+         file = here("Figures/Figure S7.pdf"), device = "pdf")
 
 ```
 
@@ -2452,7 +2455,7 @@ editor_options:
            y = "Proportional host abundance")
   
   ggsave(plot, width = 170, height = 170, units = "mm", dpi = 300,
-         file = here("Figures/Figure S8.eps"), device = cairo_ps)
+         file = here("Figures/Figure S8.pdf"), device = "pdf")
 
 ```
 
@@ -2540,7 +2543,7 @@ editor_options:
            title = "")
     
   ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
-         file = here("Figures/Figure S9.eps"), device = cairo_ps)
+         file = here("Figures/Figure S9.pdf"), device = "pdf")
 
 ```
 
@@ -2771,7 +2774,7 @@ editor_options:
   plot <- plot_grid(A, B, C, ncol = 1, rel_heights = c(1, 0.8, 0.8))
 
   ggsave(plot, width = 170, height = 200, units = "mm", dpi = 300,
-         file = here("Figures/Figure 4.eps"), device = cairo_ps)
+         file = here("Figures/Figure 4.pdf"), device = "pdf")
 
 ```
 
@@ -2916,7 +2919,7 @@ editor_options:
   plot <- plot_grid(A, B, C, D, E, legend, ncol = 1, rel_heights = c(3, 1.3, 2, 3, 2, 0.5))
   
   ggsave(plot, width = 170, height = 225, units = "mm", dpi = 300,
-     file = here("Figures/Figure S10.eps"), device = cairo_ps)
+     file = here("Figures/Figure S10.pdf"), device = "pdf")
     
 ```
 
@@ -2958,7 +2961,7 @@ editor_options:
            y = "Rank abundance (%)")
   
   ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
-         file = here("Figures/Figure S11.eps"), device = cairo_ps)
+         file = here("Figures/Figure S11.pdf"), device = "pdf")
 
 ```
 
@@ -2998,7 +3001,7 @@ editor_options:
            y = "Rank abundance (%)")
 
   ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
-     file = here("Figures/Figure S12.eps"), device = cairo_ps)
+     file = here("Figures/Figure S12.pdf"), device = "pdf")
     
 ```
 
@@ -3053,7 +3056,7 @@ editor_options:
            fill = "")
   
   ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
-         file = here("Figures/Figure S13.eps"), device = cairo_ps)
+         file = here("Figures/Figure S13.pdf"), device = "pdf")
 
 ```
 
@@ -3127,6 +3130,6 @@ editor_options:
            shape = "Site:")
   
   ggsave(plot, width = 170, height = 100, units = "mm", dpi = 300,
-         file = here("Figures/Figure S14.eps"), device = cairo_ps)
+         file = here("Figures/Figure S14.pdf"), device = "pdf")
 
 ```
