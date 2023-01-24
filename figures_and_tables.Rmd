@@ -15,9 +15,11 @@ editor_options:
 
   devtools::install_github("wilkox/ggwrap")
   library(ggwrap)
+  devtools::install_github("clauswilke/ggtext")
+  library(ggtext)
 
   if (!require("pacman")){install.packages("pacman")}
-  pacman::p_load(BiocGenerics, ComplexUpset, dendextend, devtools, flextable, furrr, GGally, ggdendro, ggplotify, ggpubr, grid, gggenes, here, lemon, lme4, lmerTest, magrittr, MuMIn, pals, phangorn, phyloseq, RColorBrewer, readxl, rstatix, seqinr, sjPlot, spaa, cowplot, tidyverse, vegan, vroom, xlsx)
+  pacman::p_load(BiocGenerics, ComplexUpset, dendextend, devtools, flextable, furrr, GGally, ggdendro,  gggenes, ggplotify, ggpubr, grid, here, lemon, lme4, lmerTest, magrittr, MuMIn, pals, phangorn, phyloseq, RColorBrewer, readxl, rstatix, seqinr, sjPlot, spaa, cowplot, tidyverse, vegan, vroom, xlsx)
 
 ```
 
@@ -28,9 +30,6 @@ editor_options:
   theme_set(theme_bw()) # set classic theme for ggplot
   browns_palette <- c("#B5651D", "#974C00", "#7A3500", "#5D1E00", "#410600", "#2A0001")
   set.seed(123)
-  # width of 85 mm for half page width figure
-  # width of 170 mm for full page width figure
-  # maximum height of 225 mm for figure and legend
 
 ```
 
@@ -639,13 +638,14 @@ editor_options:
                         breaks = c("vOTU", "Demerecviridae", "Former Myoviridae", "Herelleviridae",
                                    "Molycolviridae", "Peduoviridae", "Former Podoviridae", "Schitoviridae",
                                    "Former Siphoviridae", "Zierdtviridae", "Unknown"),
-                        labels = c("vOTU", "Demerecviridae", "Former Myoviridae", "Herelleviridae",
-                                   "Molycolviridae", "Peduoviridae", "Former Podoviridae", "Schitoviridae",
-                                   "Former Siphoviridae", "Zierdtviridae", "Other/Unknown"),
+                        labels = c("vOTU", "*Demerecviridae*", "Former *Myoviridae*", "*Herelleviridae*",
+                                   "*Molycolviridae*", "*Peduoviridae*", "Former *Podoviridae*", "*Schitoviridae*",
+                                   "Former *Siphoviridae*", "*Zierdtviridae*", "Other/Unknown"),
                         name = "Phage Family:") +
       guides(fill = guide_legend(override.aes = list(colour = c("black", rep("white", 10))))) +
       theme(legend.position = "bottom",
-            text = element_text(size = 10))
+            text = element_text(size = 10),
+            legend.text = element_markdown())
   
 # save as pdf 6 x 6 inches
   ggsave(plot3, width = 170, height = 225, units = "mm", dpi = 300,
@@ -1883,7 +1883,7 @@ editor_options:
 # visualise virus-host linkages
   plot <-
     ggplot(df, aes(x = DEPTH, y = PROPORTION, fill = PHYLUM)) +
-      geom_area(colour = "white", position = "fill", outline.type = "upper", size = 0.3) +
+      geom_area(colour = "white", position = "fill", outline.type = "upper", linewidth = 0.3) +
       facet_grid(cols = vars(SITE), 
                  rows = vars(GENOME)) +
       scale_x_continuous(limits = c(20, 120),
@@ -1891,9 +1891,11 @@ editor_options:
       scale_y_continuous(limits = c(0, 1),
                          breaks = seq(0, 1, 0.25)) +
       scale_fill_manual(breaks = c("Actinomycetota", "Pseudomonadota", "Bacillota", "Acidobacteriota", "Mycoplasmatota", "Verrucomicrobiota", "Gemmatimonadota", "Other", "Undefined"),
+                        labels = c("*Actinomycetota*", "*Pseudomonadota*", "*Bacillota*", "*Acidobacteriota*", "*Mycoplasmatota*", "*Verrucomicrobiota*", "*Gemmatimonadota*", "Other", "Undefined"),
                         values = c(brewer.pal(7, "Dark2"), "grey80", alpha("white", 0)),
                         drop = FALSE) +
-      theme(text = element_text(size = 10)) +
+      theme(text = element_text(size = 10),
+            legend.text = element_markdown()) +
       guides(fill = guide_legend(reverse = T,
                                  override.aes = list(size = 0.5, colour = c("black", rep("white", 8))))) +
       labs(x = "Soil depth (cm)",
@@ -2412,8 +2414,8 @@ editor_options:
                              grepl("20", SAMPLE) ~ 20)) %>% 
     mutate(SITE = case_when(grepl("Sage1", SAMPLE) ~ "Hilly grassland",
                             grepl("Sage2", SAMPLE) ~ "Garry Oak")) %>% 
-    mutate(GROUP = paste(SITE, HOST_PHYLUM, sep = ": ")) %>% 
-    mutate(GROUP = factor(GROUP, levels = c("Garry Oak: Actinomycetota", "Hilly grassland: Actinomycetota", "Garry Oak: Bacillota", "Hilly grassland: Bacillota", "Garry Oak: Pseudomonadota", "Hilly grassland: Pseudomonadota")))
+    mutate(GROUP = paste(SITE, ": *", HOST_PHYLUM, "*", sep = "")) %>% 
+    mutate(GROUP = factor(GROUP, levels = c("Garry Oak: *Actinomycetota*", "Hilly grassland: *Actinomycetota*", "Garry Oak: *Bacillota*", "Hilly grassland: *Bacillota*", "Garry Oak: *Pseudomonadota*", "Hilly grassland: *Pseudomonadota*")))
   
 # compute correlation coefficients for viral and bacterial abundance by phylum
   stat_correlation <-
@@ -2447,7 +2449,7 @@ editor_options:
                          labels = c("Hilly grassland", "Garry Oak"), 
                          values = c(15, 17),
                          guide = "none") + 
-      theme(text = element_text(size = 10)) +
+      theme(text = element_text(size = 10), strip.text = element_markdown()) +
       labs(x = "Proportional viral abundance", 
            y = "Proportional host abundance")
   
@@ -3043,8 +3045,10 @@ editor_options:
       scale_y_continuous(limits = c(0, 1),
                          breaks = seq(0, 1, 0.25)) +
       scale_fill_manual(breaks = c("Actinomycetota", "Pseudomonadota", "Bacillota", "Bacteroidota", "Acidobacteriota", "Other", "Unknown"),
+                        labels = c("*Actinomycetota*", "*Pseudomonadota*", "*Bacillota*", "*Bacteroidota*", "*Acidobacteriota*", "Other", "Unknown"),
                         values = c(brewer.pal(5, "Dark2"), "grey80", alpha("white", 0))) +
-      theme(text = element_text(size = 10)) +
+      theme(text = element_text(size = 10), 
+            legend.text = element_markdown()) +
       guides(fill = guide_legend(reverse = T,
                                  override.aes = list(size = 0.5, colour = c("black", rep("white", 6))))) +
       labs(x = "Soil depth (cm)",
