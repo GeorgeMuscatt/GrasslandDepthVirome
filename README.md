@@ -14,6 +14,7 @@ Note: **Table 1** is not generated within R.
 The `Data` directory holds the raw and processed data files to be loaded into the R environment by `figures_and_tables.Rmd`:
 
 -	`AMG_annotations.csv` = functional annotations for putative viral-encoded auxiliary metabolic genes
+-	`assembly_statistics.csv` = assembly statistics for each sample metagenome
 -	`defense_finder_genes.tsv` = anti-phage defence system genes detected on microbial scaffolds
 -	`defense_finder_systems.tsv` = anti-phage defence systems detected on microbial scaffolds
 -	`DNA_vOTU_gene_annotations.csv` = functional annotations for all viral genes
@@ -24,6 +25,7 @@ The `Data` directory holds the raw and processed data files to be loaded into th
 -	`green_genes.tsv` = Greengenes bacterial taxonomy list
 -	`inphared_data_1Aug2022.tsv` = metadata on viral genomes from INfrastructure for a PHAge REference Database (INPHARED) repository
 -	`instrainComparer_comparisonsTable.tsv` = consensus ANI output from instrain
+-	`kraken_class_reads` = number of raw metagenome reads assigned to each bacterial class, as calculated with kraken2
 -	`local_contig_microdiversity.tsv` = micro diversity estimates at contig-level outputted by metapop
 -	`local_gene_microdiversity.tsv` = micro diversity estimates at gene-level outputted by metapop
 -	`lysogeny_gene_hits.tsv` = viral gene hits to lysogenic PFAM modules
@@ -39,4 +41,4 @@ The `Figures` directory serves as a location for main and supplementary figures 
 
 The `Tables` directory serves as a location for supplementary tables created by the script `figures_and_tables.Rmd` to be saved into.
 
-This README and `figures_and_tables.Rmd` was written by George Muscatt (g.s.muscatt(at)warwick.ac.uk).
+This README and `figures_and_tables.Rmd` was written by George Muscatt.
